@@ -187,21 +187,23 @@ class X12Validator:
             "NM1", "SVC", "ADJ", "DTP", "BHT", "HL", "PER", "SBR", "HI",
             "SV1", "SV2", "SV3", "SV4", "SV5", "DMG", "AMT", "QTY", "CTP",
             "HCP", "CUR", "NTE", "PAT", "LIN", "CR1", "CR2", "CR3", "CR4",
-            "CR5", "RDM", "PLB", "RMR", "ENT", "NME", "NX1", "LX", "K1",
+            "CR5", "RDM", "PLB", "RMR", "ENT", "NME", "NX1", "K1",
+            "CLM", "PLB", "BPR",
         ))
 
         # Identify orphan ISA/IEA/GS/GE segments that appear outside interchanges
-        found_isa = False
         in_interchange = False
         in_group = False
         in_transaction = False
 
         for i, seg in enumerate(raw_segs):
             if seg.tag == "ISA":
-                if found_isa and not in_interchange:
-                    result.add_error("ORPHAN_ISA", f"Extra ISA segment at position {seg.position}; "
-                                    "already outside a prior interchange", seg.tag, seg.position)
-                found_isa = True
+                # Multiple ISA/IEA interchanges are valid — only error if ISA appears
+                # while we are already inside an open interchange (unclosed ISA).
+                if in_interchange:
+                    result.add_error("ORPHAN_ISA", f"ISA segment at position {seg.position} "
+                                    "appears while a prior interchange has not been closed with IEA",
+                                    seg.tag, seg.position)
                 in_interchange = True
             elif seg.tag == "IEA":
                 if not in_interchange:

@@ -1,101 +1,164 @@
-# X12 Parser — Healthcare EDI 835 / 837
+# X12 Parser
 
-**Version 0.1.0** — Initial release
-
-## Overview
-
-A Python library and CLI for parsing X12 EDI transactions, focused on:
-
-- **835** — Healthcare Claim Payment/Advice
-- **837** — Healthcare Claim (Professional & Institutional)
-
-> **v0.1.0 positioning:** A practical parser / extractor for common 835 and 837 structures. Suitable for prototyping, inspection, and downstream transformation. Not yet a full X12 standards validator — loop IDs are inferred heuristically and no schema or semantic validation is performed.
-
-## Project Structure
+**Parse and validate healthcare EDI 835 and 837 transactions in Python or from the command line.**
 
 ```
-x12-parser/
-├── src/
-│   ├── __init__.py       — package init
-│   ├── parser.py        — core parser (tokenizer, segment, loop, transaction)
-│   ├── cli.py            — CLI: parse and emit JSON
-│   └── validate.py       — CLI: structural validation report
-├── tests/
-│   ├── test_parser.py    — pytest-based tests
-│   └── fixtures/
-│       ├── sample_835.edi              — basic 835 (2 claims, 2LX)
-│       ├── sample_835_rich.edi          — richer 835 (PLB, ADJ, multiple N1/REF)
-│       ├── sample_837_prof.edi          — basic 837 professional
-│       ├── sample_837_prof_rich.edi      — richer 837 professional (more HL levels)
-│       ├── sample_837_institutional.edi   — basic 837 institutional
-│       ├── sample_multi_transaction.edi   — multiple ST/SE in one GS/GE
-│       ├── sample_multi_interchange.edi  — multiple ISA/IEA interchanges
-│       └── sample_whitespace_irregular.edi — irregular CR/LF/space layout
-├── run_tests.py          — manual test runner (no pytest needed)
-└── pyproject.toml
+python3 -m src.cli  sample.edi                  # → JSON
+python3 -m src.validate sample.edi               # → structural report
 ```
 
-## Installation
+X12 EDI is the dominant interchange format for US healthcare administrative data — claim payments, remittance advices, and professional/institutional claims all travel over X12. This library gives you a plain-Python, dependency-free way to pull that data into structured JSON.
+
+---
+
+## Quickstart
 
 ```bash
-# No external dependencies (stdlib only)
+# Install (no external dependencies — stdlib only)
 pip install -e .
-```
 
-## Usage
+# Parse an 835 remittance file → JSON
+python3 -m src.cli tests/fixtures/sample_835.edi
+
+# Validate an 835 for structural integrity
+python3 -m src.validate tests/fixtures/sample_835.edi
+
+# Run the full demo (4 commands, auto-summarised output)
+./demo/run.sh
+```
 
 ### Python API
 
 ```python
-from src.parser import parse_file, parse, X12Parser
+from src.parser import X12Parser, parse
 
-# Parse from file
+# From file
 parser = X12Parser.from_file("sample.edi")
 print(parser.to_json())
 
-# Parse from string
-from src.parser import parse
+# From string
 p = parse(edi_text)
 print(p.to_json())
 ```
 
-### CLI — Parse mode
+---
+
+## Features
+
+### Supported transaction types
+
+| ID  | Name | Status |
+|-----|------|--------|
+| **835** | Healthcare Claim Payment/Advice | ✅ Parsed |
+| **837 P** | Healthcare Claim — Professional (CMS-1500) | ✅ Parsed |
+| **837 I** | Healthcare Claim — Institutional (UB-04) | ✅ Parsed |
+
+### Envelope structure
+
+ISA/IEA (interchange) → GS/GE (functional group) → ST/SE (transaction set) are fully parsed, including sender/receiver IDs and segment counts.
+
+### Segment coverage
+
+All standard 835 and 837 segments are detected and preserved with full element decomposition. Key segments include BPR, TRN, N1, NM1, CLP, SVC, CAS, HI, CLM, SV1, SV2, and 30+ more.
+
+### Output
+
+JSON with nested envelopes, transaction sets, and loops. Each segment carries its raw `elements` dict (`e1`, `e2`, …) for downstream use.
+
+---
+
+## CLI
+
+### Parse mode
 
 ```bash
-# Print JSON to stdout
+# Pretty-printed JSON (default)
 python3 -m src.cli tests/fixtures/sample_835.edi
 
-# Write JSON to file
-python3 -m src.cli tests/fixtures/sample_835.edi -o output.json
-
-# Compact (no indentation)
+# Compact JSON (no indentation)
 python3 -m src.cli tests/fixtures/sample_835.edi --compact
+
+# Write to file
+python3 -m src.cli tests/fixtures/sample_835.edi -o output.json
 ```
 
-### CLI — Validate mode
+### Validate mode
+
+Validates ISA/IEA, GS/GE, and ST/SE pairing; orphan segments; empty groups/transactions; and SE segment-count signals.
 
 ```bash
-# Human-readable structural validation report
+# Human-readable report
 python3 -m src.validate tests/fixtures/sample_835.edi
 
-# Report + JSON output
-python3 -m src.validate tests/fixtures/sample_835.edi -o validation.json
-
-# Compact (for machine consumption)
-python3 -m src.validate tests/fixtures/sample_835.edi --compact
+# Write report to file
+python3 -m src.validate tests/fixtures/sample_835.edi -o report.txt
 ```
 
-Validate mode checks:
-- ISA / IEA interchange pairing and count match
-- GS / GE functional group pairing and count match
-- ST / SE transaction set pairing and count match
-- Orphan segments (segments appearing outside valid envelopes)
-- Empty groups or transactions (GS..GE or ST..SE with no inner content)
-- Malformed nesting signals (segment count mismatches)
+**Exit codes:** `0` = clean, `1` = structural errors found, `2` = could not parse.
 
-Exit code: `0` = clean, `1` = structural errors found, `2` = could not parse.
+---
 
-### Run Tests
+## Installation
+
+```bash
+pip install -e .
+```
+
+Requires Python 3.9+. No third-party dependencies.
+
+---
+
+## Project structure
+
+```
+x12-parser/
+├── src/
+│   ├── __init__.py       — package entry point
+│   ├── parser.py         — core parser (tokenizer, segment, loop, envelope)
+│   ├── cli.py             — parse CLI (json output)
+│   └── validate.py       — validate CLI (structural report)
+├── tests/
+│   ├── test_parser.py    — pytest unit tests
+│   └── fixtures/         — sample EDI files
+│       ├── sample_835.edi              — basic 835
+│       ├── sample_835_rich.edi          — richer 835 (PLB, ADJ, multi-N1)
+│       ├── sample_837_prof.edi          — basic 837 professional
+│       ├── sample_837_prof_rich.edi      — richer 837 professional
+│       ├── sample_837_institutional.edi   — basic 837 institutional
+│       ├── sample_multi_transaction.edi   — multiple ST/SE in one GS/GE
+│       ├── sample_multi_interchange.edi  — multiple ISA/IEA interchanges
+│       └── sample_whitespace_irregular.edi — irregular CR/LF/space layout
+├── demo/
+│   ├── run.sh            — demo script (4 commands, auto-summarised)
+│   └── *.txt / *.json    — pre-generated sample outputs
+├── DEMO.md               — demo walkthrough and sample output
+├── run_tests.py          — manual test runner
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## Limitations
+
+X12 Parser v0.1.0 is a **parser and structural checker**, not a full X12 validator:
+
+| What it does | What it doesn't do |
+|---|---|
+| Tokenise on standard X12 delimiters | Handle non-standard delimiter sets |
+| Parse envelope structure (ISA/GS/ST/SE/GE/IEA) | Schema-validate segment order or required elements |
+| Extract sender/receiver from ISA header | Validate X12 code values (e.g. "85" vs "86") |
+| Detect and group loops by segment leader | Produce official X12 loop IDs (output uses heuristic keys) |
+| Structural envelope validation (pairing, counts, orphans) | Cross-segment semantic reconciliation (e.g. CLP vs SVC amounts) |
+| Preserve all segment elements as raw strings | Decompose composite elements (e.g. `12:345` → sub-fields) |
+
+**Transaction types:** Only 835, 837 Professional, and 837 Institutional are supported. 277, 278, 834, and others are not yet implemented.
+
+**Large files** have not been stress-tested.
+
+---
+
+## Running tests
 
 ```bash
 # With pytest
@@ -104,116 +167,3 @@ PYTHONPATH=. python3 -m pytest tests/test_parser.py -v
 # Without pytest
 python3 run_tests.py
 ```
-
-## Support Matrix — v0.1.0
-
-### Envelope Structure
-
-| Segment | Description | Status |
-|---------|-------------|--------|
-| ISA/IEA | Interchange envelope | ✅ Parsed |
-| GS/GE | Functional group envelope | ✅ Parsed |
-| ST/SE | Transaction set framing | ✅ Parsed |
-
-### 835 Segments Detected
-
-| Segment | Name | Status |
-|---------|------|--------|
-| BPR | Financial Information | ✅ Detected & preserved |
-| TRN | Trace Number | ✅ Detected & preserved |
-| DTM | Date/Time Reference | ✅ Detected & preserved |
-| N1 | Payer/Provider Name | ✅ Detected & preserved |
-| N3/N4 | Address | ✅ Detected & preserved |
-| REF | Reference Identification | ✅ Detected & preserved |
-| LX | Claim/Service Line Counter | ✅ Detected & preserved |
-| CLP | Claim Information | ✅ Detected & preserved |
-| CAS | Claim-level Adjustments | ✅ Detected & preserved |
-| NM1 | Individual Name (QC, PR, PE) | ✅ Detected & preserved |
-| SVC | Service Line Information | ✅ Detected & preserved |
-| ADJ | Adjustment | ✅ Detected & preserved |
-| SE | Transaction Set Trailer | ✅ Parsed |
-| GE | Functional Group Trailer | ✅ Parsed |
-| IEA | Interchange Trailer | ✅ Parsed |
-
-### 837 Segments Detected
-
-| Segment | Name | Status |
-|---------|------|--------|
-| BHT | Beginning of Hierarchical Transaction | ✅ Detected & preserved |
-| HL | Hierarchical Level | ✅ Detected & preserved |
-| NM1 | Name segments (85 IL PR 41 40 77 77 etc.) | ✅ Detected & preserved |
-| PER | Contact Information | ✅ Detected & preserved |
-| SBR | Subscriber Information | ✅ Detected & preserved |
-| CLM | Claim Information | ✅ Detected & preserved |
-| HI | Health Care Diagnosis Codes | ✅ Detected & preserved |
-| SV1 | Professional Service (CMS-1500) | ✅ Detected & preserved |
-| SV2 | Institutional Service (UB-04) | ✅ Detected & preserved |
-| DTP | Date/Time | ✅ Detected & preserved |
-| REF | Reference | ✅ Detected & preserved |
-| N3/N4 | Address | ✅ Detected & preserved |
-| DMG | Demographic Information | ✅ Detected & preserved |
-| SE | Transaction Set Trailer | ✅ Parsed |
-
-## Assumptions
-
-1. **Delimiter detection** — v0.1.0 assumes standard X12 delimiters: `*` (element separator), `:` (component separator), `~` (segment terminator). Non-standard separators may cause incorrect parsing.
-2. **Repetition separator** — ISA-11 (repetition separator) is treated as `^` but is not currently used to split fields.
-3. **Fixed-width ISA** — The ISA is assumed to be in the standard X12 fixed-width format (position-based) and element positions are extracted accordingly.
-4. **Loop construction** — Loops are inferred heuristically from segment leader patterns (NM1, CLM, N1, LX, etc.) rather than explicit loop IDs in the data. Loop IDs in output may not match official X12 loop nomenclature.
-5. **Composite elements** — Returned as raw strings (e.g., `12:345`) — not decomposed into sub-components.
-6. **ISA sender/receiver** — ISA-06 is the sender ID; ISA-08 is the receiver ID.
-
-## Known Limitations
-
-- ❌ No X12 schema validation (segment order, required elements, code values)
-- ❌ No cross-segment semantic validation (e.g., CLP amount vs. SVC amount reconciliation)
-- ❌ No 277/278/834 transaction support
-- ❌ No handling of transaction sets without ISA/IEA wrappers (bare ST/SE)
-- ❌ No handling of escaped delimiters within data elements
-- ❌ No unicode/escape character handling beyond basic UTF-8
-- ⚠️ Loop IDs are inferred heuristically — may not match official X12 loop nomenclature
-- ⚠️ Large files not stress-tested
-- ⚠️ validate.py performs structural/envelope validation only — it is not an X12 schema validator
-
-## Output Format
-
-The parser produces JSON with this structure:
-
-```json
-{
-  "version": "0.1.0",
-  "interchanges": [
-    {
-      "header": { "tag": "ISA", "elements": {...}, "raw": "...", "position": 1 },
-      "isa06_sender": "SUBMITTER",
-      "isa08_receiver": "RECEIVER",
-      "functional_groups": [
-        {
-          "header": { "tag": "GS", ... },
-          "transactions": [
-            {
-              "header": { "tag": "ST", ... },
-              "set_id": "835",
-              "loops": [
-                {
-                  "id": "PR",
-                  "leader_tag": "N1",
-                  "leader_code": "PR",
-                  "kind": "entity",
-                  "description": "Payer Name",
-                  "segments": [{ "tag": "N1", "elements": {...} }]
-                }
-              ],
-              "trailer": { "tag": "SE", ... }
-            }
-          ],
-          "trailer": { "tag": "GE", ... }
-        }
-      ],
-      "trailer": { "tag": "IEA", ... }
-    }
-  ]
-}
-```
-
-Each `elements` dict maps `e{N}` (1-based) → raw string value.

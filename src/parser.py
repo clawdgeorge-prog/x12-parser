@@ -208,6 +208,7 @@ _LOOP_KINDS = {
     "8": "entity",     #配偶
     # Claim / service leaders
     "CLM": "claim",
+    "CLP": "claim",
     "LX": "service",
     "SV1": "service",
     "SV2": "service",
@@ -235,6 +236,14 @@ _LOOP_KINDS = {
     "NTE": "note",
     "LIN": "line_item",
     "CTP": "pricing",
+    "RDM": "remittance",
+    "HL": "hierarchy",
+    "CR1": "ambulance",
+    "CR2": "spine",
+    "CR3": "oxygen",
+    "CR4": "durable_medical",
+    "CR5": "vision",
+    "ENT": "entity",
     "RDM": "remittance",
     "BPR": "payment",
     "TRN": "trace",
@@ -327,9 +336,10 @@ def _detect_loops(segments: List[Segment]) -> List[Loop]:
     # Tags that trigger a new loop grouping
     LOOP_LEADER_TAGS = frozenset((
         "NM1", "CLM", "N1", "LX", "SV1", "SV2", "SV3", "HI", "BPR",
+        "CLP", "PLB",
         "ADJ", "CAS", "REF", "DTM", "PER", "AMT", "QTY", "CTP",
         "HCP", "TRN", "CUR", "DMG", "PAT", "NTE", "LIN", "CR1",
-        "CR2", "CR3", "CR4", "CR5", "RDM", "PLB", "BHT",
+        "CR2", "CR3", "CR4", "CR5", "RDM", "BHT", "HL",
     ))
 
     loops: List[Loop] = []
@@ -345,7 +355,13 @@ def _detect_loops(segments: List[Segment]) -> List[Loop]:
             leader_code = seg.elements[0].raw if seg.elements else ""
 
             if current_loop_id and current_loop_segments:
-                kind = _LOOP_KINDS.get(current_leader_tag, "other")
+                # Use current_loop_id (the previous loop's key) for kind lookup;
+                # fall back to the previous leader_tag for tag-keyed entries.
+                kind = (
+                    _LOOP_KINDS.get(current_loop_id) or
+                    _LOOP_KINDS.get(current_leader_tag) or
+                    "other"
+                )
                 desc = _infer_loop_description(current_leader_tag, current_loop_id)
                 loops.append(Loop(
                     id=current_loop_id,
@@ -363,7 +379,11 @@ def _detect_loops(segments: List[Segment]) -> List[Loop]:
         i += 1
 
     if current_loop_id and current_loop_segments:
-        kind = _LOOP_KINDS.get(current_leader_tag, "other")
+        kind = (
+            _LOOP_KINDS.get(current_loop_id) or
+            _LOOP_KINDS.get(current_leader_tag) or
+            "other"
+        )
         desc = _infer_loop_description(current_leader_tag, current_loop_id)
         loops.append(Loop(
             id=current_loop_id,

@@ -189,6 +189,220 @@ class Test837Institutional:
         assert "SV2" in all_tags, "Institutional claims use SV2"
 
 
+# ── Loop metadata ─────────────────────────────────────────────────────────────
+
+class TestLoopMetadata:
+    """Verify that loop output includes enriched metadata fields."""
+
+    def test_835_loop_has_all_metadata_fields(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        for loop in ts["loops"]:
+            assert "leader_tag" in loop, f"loop {loop['id']} missing leader_tag"
+            assert "leader_code" in loop, f"loop {loop['id']} missing leader_code"
+            assert "kind" in loop, f"loop {loop['id']} missing kind"
+            assert "description" in loop, f"loop {loop['id']} missing description"
+            assert loop["leader_tag"] != "", f"loop {loop['id']} has empty leader_tag"
+            assert loop["kind"] != "", f"loop {loop['id']} has empty kind"
+            assert loop["description"] != "", f"loop {loop['id']} has empty description"
+
+    def test_835_loop_kind_values_recognized(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        valid_kinds = {
+            "entity", "claim", "service", "header", "adjustment",
+            "amount", "date", "reference", "diagnosis", "payment",
+            "trace", "other",
+        }
+        for loop in ts["loops"]:
+            assert loop["kind"] in valid_kinds, \
+                f"loop {loop['id']} has unknown kind: {loop['kind']}"
+
+    def test_835_plb_loop_kind_is_adjustment(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        plb_loops = [l for l in ts["loops"] if l["leader_tag"] == "PLB"]
+        assert len(plb_loops) >= 1, "PLB loop not found in rich 835"
+        for l in plb_loops:
+            assert l["kind"] == "adjustment", f"PLB loop has kind={l['kind']}"
+
+    def test_837_nm1_loops_kind_is_entity(self):
+        fixture = FIXTURES / "sample_837_prof.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        nm1_loops = [l for l in ts["loops"] if l["leader_tag"] == "NM1"]
+        assert len(nm1_loops) >= 1
+        for l in nm1_loops:
+            assert l["kind"] == "entity", f"NM1 loop has kind={l['kind']}"
+
+    def test_837_svc_loops_kind_is_service(self):
+        fixture = FIXTURES / "sample_837_prof.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        svc_loops = [l for l in ts["loops"] if l["leader_tag"] in ("SV1", "SV2", "LX")]
+        assert len(svc_loops) >= 1
+        for l in svc_loops:
+            assert l["kind"] in ("service",), f"{l['leader_tag']} loop has kind={l['kind']}"
+
+
+# ── Rich 835 fixture ─────────────────────────────────────────────────────────
+
+class Test835Rich:
+    @classmethod
+    def setup_class(cls):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        cls.parser = X12Parser.from_file(fixture)
+        cls.data = cls.parser.to_dict()
+
+    def test_interchange_header(self):
+        ic = self.data["interchanges"][0]
+        assert ic["header"]["tag"] == "ISA"
+
+    def test_transaction_set_id(self):
+        ic = self.data["interchanges"][0]
+        ts = ic["functional_groups"][0]["transactions"][0]
+        assert ts["set_id"] == "835"
+
+    def test_has_plb_segments(self):
+        ic = self.data["interchanges"][0]
+        ts = ic["functional_groups"][0]["transactions"][0]
+        all_tags = [s["tag"] for l in ts["loops"] for s in l["segments"]]
+        assert "PLB" in all_tags, "Rich 835 should contain PLB segments"
+
+    def test_multiple_lx_loops(self):
+        ic = self.data["interchanges"][0]
+        ts = ic["functional_groups"][0]["transactions"][0]
+        lx_loops = [l for l in ts["loops"] if l["leader_tag"] == "LX"]
+        assert len(lx_loops) >= 3, f"Expected >=3 LX loops, got {len(lx_loops)}"
+
+    def test_has_per_segment(self):
+        ic = self.data["interchanges"][0]
+        ts = ic["functional_groups"][0]["transactions"][0]
+        all_tags = [s["tag"] for l in ts["loops"] for s in l["segments"]]
+        assert "PER" in all_tags
+
+    def test_se_count_present(self):
+        ic = self.data["interchanges"][0]
+        ts = ic["functional_groups"][0]["transactions"][0]
+        assert ts["trailer"]["elements"]["e1"] not in (None, "", "0")
+
+
+# ── Rich 837 Professional fixture ─────────────────────────────────────────────
+
+class Test837ProfRich:
+    @classmethod
+    def setup_class(cls):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        cls.parser = X12Parser.from_file(fixture)
+        cls.data = cls.parser.to_dict()
+
+    def test_interchange_header(self):
+        ic = self.data["interchanges"][0]
+        assert ic["header"]["tag"] == "ISA"
+
+    def test_transaction_set_id(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert ts["set_id"] == "837"
+
+    def test_multiple_hl_levels(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        hl_loops = [l for l in ts["loops"] if l["leader_tag"] == "HL"]
+        assert len(hl_loops) >= 2, f"Expected >=2 HL loops, got {len(hl_loops)}"
+
+    def test_has_nested_subscriber_hl(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        # Find subscriber-level HL loops (child of billing provider HL, HL ID "2")
+        subscriber_hls = [l for l in ts["loops"] if l["leader_tag"] == "HL" and l["leader_code"] == "2"]
+        assert len(subscriber_hls) >= 1, f"Expected at least 1 subscriber HL loop, got {len(subscriber_hls)}"
+
+
+# ── Multi-transaction fixture ─────────────────────────────────────────────────
+
+class TestMultiTransaction:
+    @classmethod
+    def setup_class(cls):
+        fixture = FIXTURES / "sample_multi_transaction.edi"
+        cls.parser = X12Parser.from_file(fixture)
+        cls.data = cls.parser.to_dict()
+
+    def test_three_transactions_in_one_group(self):
+        fg = self.data["interchanges"][0]["functional_groups"][0]
+        assert len(fg["transactions"]) == 3
+
+    def test_all_set_id_835(self):
+        fg = self.data["interchanges"][0]["functional_groups"][0]
+        assert all(ts["set_id"] == "835" for ts in fg["transactions"])
+
+    def test_distinct_transaction_ids(self):
+        fg = self.data["interchanges"][0]["functional_groups"][0]
+        ids = [ts["header"]["elements"]["e2"] for ts in fg["transactions"]]
+        assert len(set(ids)) == 3
+
+    def test_each_transaction_has_loops(self):
+        fg = self.data["interchanges"][0]["functional_groups"][0]
+        assert all(len(ts["loops"]) >= 1 for ts in fg["transactions"])
+
+
+# ── Multi-interchange fixture ──────────────────────────────────────────────────
+
+class TestMultiInterchange:
+    @classmethod
+    def setup_class(cls):
+        fixture = FIXTURES / "sample_multi_interchange.edi"
+        cls.parser = X12Parser.from_file(fixture)
+        cls.data = cls.parser.to_dict()
+
+    def test_three_interchanges(self):
+        assert len(self.data["interchanges"]) == 3
+
+    def test_ic1_is_835(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert ts["set_id"] == "835"
+
+    def test_ic2_is_835(self):
+        ts = self.data["interchanges"][1]["functional_groups"][0]["transactions"][0]
+        assert ts["set_id"] == "835"
+
+    def test_ic3_is_837(self):
+        ts = self.data["interchanges"][2]["functional_groups"][0]["transactions"][0]
+        assert ts["set_id"] == "837"
+
+    def test_ic3_sender_extracted(self):
+        ic3 = self.data["interchanges"][2]
+        assert ic3["isa06_sender"] == "THIRDIC"
+        assert ic3["isa08_receiver"] == "THIRDRCV"
+
+
+# ── Whitespace-irregular fixture ──────────────────────────────────────────────
+
+class TestWhitespaceIrregular:
+    @classmethod
+    def setup_class(cls):
+        fixture = FIXTURES / "sample_whitespace_irregular.edi"
+        cls.parser = X12Parser.from_file(fixture)
+        cls.data = cls.parser.to_dict()
+
+    def test_parses_without_crash(self):
+        # Should not raise
+        ic = self.data["interchanges"][0]
+        assert ic["header"]["tag"] == "ISA"
+
+    def test_transaction_is_835(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert ts["set_id"] == "835"
+
+    def test_has_clp_loop(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert any(l["leader_tag"] == "CLP" for l in ts["loops"])
+
+    def test_has_nm1_qc_loop(self):
+        ts = self.data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert any(l["leader_code"] == "QC" for l in ts["loops"])
+
+
 # ── JSON roundtrip ─────────────────────────────────────────────────────────────
 
 def test_json_serializable():

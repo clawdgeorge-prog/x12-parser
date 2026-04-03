@@ -136,7 +136,7 @@ check("rich 835: loop metadata fields present", loop_meta_ok)
 # kind should be one of known categories
 valid_kinds = {"entity", "claim", "service", "header", "adjustment",
                "amount", "date", "reference", "diagnosis", "payment",
-               "trace", "other"}
+               "trace", "other", "contact"}
 kind_ok = all(l.get("kind", "") in valid_kinds for l in ts_rich["loops"])
 check("rich 835: loop kind values valid", kind_ok)
 # description should be non-empty
@@ -172,8 +172,8 @@ fg_mt = ic_mt["functional_groups"][0]
 check("multi-tx: has 3 transactions", len(fg_mt["transactions"]) == 3)
 check("multi-tx: all set_id 835",
       all(ts["set_id"] == "835" for ts in fg_mt["transactions"]))
-check("multi-tx: distinct SE counts",
-      len(set(ts["trailer"]["elements"]["e1"] for ts in fg_mt["transactions"])) >= 2)
+check("multi-tx: SE counts distinct",
+      len(set(ts["trailer"]["elements"]["e1"] for ts in fg_mt["transactions"])) == 3)
 check("multi-tx: each transaction has loops",
       all(len(ts["loops"]) >= 1 for ts in fg_mt["transactions"]))
 
