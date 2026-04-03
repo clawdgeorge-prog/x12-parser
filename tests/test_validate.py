@@ -256,6 +256,223 @@ class TestValidateJSONOutput:
         assert "SE_COUNT_MISMATCH" in error_codes
 
 
+# ── New validation checks ───────────────────────────────────────────────────────
+
+class TestValidateRequiredSegments:
+    """Required segments per transaction type should be present."""
+
+    def test_835_missing_bpr_detected(self):
+        # Build a minimal 835 that's missing BPR
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE*PI*123456~"
+            "CLP*CLM001****200*3**CL*12*345~"
+            "SE*6*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "REQUIRED_SEGMENT_MISSING" in codes
+        # BPR was the missing one
+        bpr_msgs = [i.message for i in r.issues if i.code == "REQUIRED_SEGMENT_MISSING" and "BPR" in i.message]
+        assert len(bpr_msgs) >= 1
+
+    def test_837_missing_clm_detected(self):
+        # Build a minimal 837 missing CLM
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~GS*HC*SENDER*RECEIVER*20250402*1234*1*X*005010X222A1~"
+            "ST*837*0001*005010X222A1~"
+            "BHT*0019*11*CLAIM001*20250402*1234*CH~"
+            "NM1*41*2*BILLING*****46*12345~"
+            "HL*1**20*1~"
+            "NM1*85*2*DR SMITH*****XX*123456~"
+            "SE*7*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "REQUIRED_SEGMENT_MISSING" in codes
+        clm_msgs = [i.message for i in r.issues if i.code == "REQUIRED_SEGMENT_MISSING" and "CLM" in i.message]
+        assert len(clm_msgs) >= 1
+
+
+class TestValidateNumericAmounts:
+    """Monetary fields in CLP/SVC/CAS should be numeric."""
+
+    def test_clp_non_numeric_billed_detected(self):
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "CLP*CLM001*NOTANUMBER*200*3**CL*12*345~"  # e2 is non-numeric
+            "SE*7*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "NON_NUMERIC_AMOUNT" in codes
+
+    def test_svc_non_numeric_billed_detected(self):
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "CLP*CLM001****200*3**CL*12*345~"
+            "SVC*HC:99213*BADAMOUNT*150***1~"  # e2 is non-numeric
+            "SE*8*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "NON_NUMERIC_AMOUNT" in codes
+
+
+class TestValidateDuplicateClaims:
+    """Duplicate claim IDs within a transaction should be flagged."""
+
+    def test_835_duplicate_clp_detected(self):
+        # Same CLP ID appears twice
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "CLP*CLM001****200*3**CL*12*345~"
+            "SVC*HC:99213*200*150***1~"
+            "CLP*CLM001****100*2**CL*12*999~"  # duplicate claim ID
+            "SVC*HC:99214*100*80***1~"
+            "SE*10*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "CLAIM_ID_DUPLICATE" in codes
+        dup_msgs = [i.message for i in r.issues if i.code == "CLAIM_ID_DUPLICATE"]
+        assert any("CLM001" in m for m in dup_msgs)
+
+    def test_837_duplicate_clm_detected(self):
+        # Same CLM ID appears twice
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~GS*HC*SENDER*RECEIVER*20250402*1234*1*X*005010X222A1~"
+            "ST*837*0001*005010X222A1~"
+            "BHT*0019*11*CLAIM001*20250402*1234*CH~"
+            "NM1*41*2*BILLING*****46*12345~"
+            "HL*1**20*1~"
+            "NM1*85*2*DR SMITH*****XX*123456~"
+            "HL*2*1*22*1~"
+            "SBR*P*18*******CI~"
+            "NM1*IL*1*DOE*JANE****MI*MEMBER001~"
+            "CLM*CLM001*500***11:B:1*Y*A*Y*Y~"
+            "SV1*HC:99213*250*200***1**1~"
+            "CLM*CLM001*500***11:B:1*Y*A*Y*Y~"  # duplicate claim ID
+            "SV1*HC:99214*250*200***1**1~"
+            "SE*14*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "CLAIM_ID_DUPLICATE" in codes
+
+
+class TestValidateISAFormat:
+    """ISA date and time fields should have valid format."""
+
+    def test_isa_invalid_date_warns(self):
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*BADATE*1234*^*00501*000000001*0*P*:~GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "SE*6*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "ISA_DATE_INVALID" in codes
+
+    def test_isa_invalid_time_warns(self):
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*BADTIME*^*00501*000000001*0*P*:~GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "SE*6*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes = {i.code for i in r.issues}
+        assert "ISA_TIME_INVALID" in codes
+
+
+class TestValidateRecommendations:
+    """Recommendations should appear in JSON output."""
+
+    def test_json_includes_recommendations(self):
+        import subprocess
+        fixture = FIXTURES / "sample_missing_se.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--json"],
+            capture_output=True, text=True,
+        )
+        parsed = json.loads(result.stdout)
+        assert "issues" in parsed
+        for issue in parsed["issues"]:
+            assert "recommendation" in issue, f"Issue {issue.get('code')} missing recommendation"
+            assert isinstance(issue["recommendation"], str)
+            assert len(issue["recommendation"]) > 0
+
+    def test_verbose_report_shows_recommendations(self):
+        import subprocess
+        fixture = FIXTURES / "sample_missing_se.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--verbose"],
+            capture_output=True, text=True,
+        )
+        # Verbose output should contain recommendation arrow
+        assert "→" in result.stdout, "Expected recommendations in verbose output"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

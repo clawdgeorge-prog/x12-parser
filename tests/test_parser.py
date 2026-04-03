@@ -441,6 +441,113 @@ def test_parse_function():
     assert ic.groups[0].transactions[0].set_id == "835"
 
 
+# ── Transaction summaries ────────────────────────────────────────────────────────
+
+class Test835Summary:
+    """Verify 835 transaction summary fields are populated and correct."""
+
+    def test_summary_present(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert "summary" in ts
+        summary = ts["summary"]
+        assert summary["set_id"] == "835"
+        assert summary["segment_count"] > 0
+        assert summary["loop_count"] > 0
+        assert summary["claim_count"] >= 1
+        assert summary["service_line_count"] >= 1
+
+    def test_summary_amounts_are_numeric(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert isinstance(summary["total_billed_amount"], (int, float))
+        assert isinstance(summary["total_paid_amount"], (int, float))
+        assert isinstance(summary["total_adjustment_amount"], (int, float))
+        assert isinstance(summary["payment_amount"], (int, float))
+
+    def test_summary_identifies_payer_and_provider(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        # From sample_835.edi: N1*PR*INSURANCE COMPANY ONE, N1*PE*PROVIDER CLINIC
+        assert summary["payer_name"] is not None
+        assert summary["provider_name"] is not None
+        assert summary["check_trace"] is not None
+
+    def test_summary_no_duplicate_claims_in_basic_fixture(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["duplicate_claim_ids"] == []
+
+
+class Test837Summary:
+    """Verify 837 transaction summary fields are populated and correct."""
+
+    def test_summary_present(self):
+        fixture = FIXTURES / "sample_837_prof.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        assert "summary" in ts
+        summary = ts["summary"]
+        assert summary["set_id"] == "837"
+        assert summary["segment_count"] > 0
+        assert summary["claim_count"] >= 1
+        assert summary["service_line_count"] >= 1
+        assert summary["hl_count"] >= 1
+
+    def test_summary_identifies_parties(self):
+        fixture = FIXTURES / "sample_837_prof.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["billing_provider"] is not None
+        assert summary["bht_id"] is not None
+        assert summary["bht_date"] is not None
+
+    def test_summary_bht_date_format(self):
+        fixture = FIXTURES / "sample_837_prof.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        # BHT e4 is CCYYMMDD format
+        assert len(summary["bht_date"]) == 8
+        assert summary["bht_date"].isdigit()
+
+
+class TestRich835Summary:
+    """Verify rich 835 summary (PLB segments, multiple LX loops)."""
+
+    def test_plb_count_reflected(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["plb_count"] >= 1, "Rich 835 should have PLB segments"
+
+    def test_multiple_claims(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["claim_count"] >= 3, "Rich 835 has 4 LX/CLP loops"
+        assert summary["service_line_count"] >= 3
+
+    def test_payment_amount_from_bpr(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        # BPR*I*3500*C*ACH... → payment_amount should be 3500.0
+        assert summary["payment_amount"] == 3500.0
+
+
 if __name__ == "__main__":
+
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

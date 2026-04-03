@@ -66,6 +66,8 @@ class TransactionSet:
     loops: List[Loop]
     trailer: Segment      # SE segment
     set_id: str           # "835" or "837"
+    # Computed summary fields (populated by _parse_summary)
+    summary: dict = field(default_factory=dict)
 
 @dataclass
 class FunctionalGroup:
@@ -566,9 +568,205 @@ class X12Parser:
                 depth -= 1
         return -1
 
+    # ── Transaction summary helpers ─────────────────────────────────────────────
+
+    def _seg_get(self, seg: Segment, index: int, sub_index: Optional[int] = None) -> Optional[str]:
+        """Get element value from a Segment, optionally sub-element."""
+        return self._seg_parser.get(seg, index, sub_index)
+
+    def _compute_835_summary(self, ts: TransactionSet) -> dict:
+        """
+        Compute financial summary for an 835 transaction.
+
+        Financial totals (billed/allowed/paid) are extracted from CLP segment
+        element positions per X12 835 specification. Note: some 835 variants
+        use non-standard CLP positions; verify against your trading-partner
+        implementation if amounts appear unexpectedly zero.
+        """
+        summary = {
+            "set_id": ts.set_id,
+            "segment_count": len(ts.loops) and sum(len(l.segments) for l in ts.loops) or 0,
+            "loop_count": len(ts.loops),
+        }
+
+        total_billed = 0.0
+        total_allowed = 0.0
+        total_paid = 0.0
+        total_adjustment = 0.0
+        payment_amount = None
+        check_trace = None
+        payer_name = None
+        provider_name = None
+        claim_count = 0
+        service_line_count = 0
+        plb_count = 0
+        # Track claim IDs to detect duplicates
+        claim_ids: List[str] = []
+        duplicate_claim_ids: List[str] = []
+
+        for loop in ts.loops:
+            for seg in loop.segments:
+                if seg.tag == "BPR":
+                    # BPR e1=payment/method, e2=amount, e16=trace
+                    raw_amt = self._seg_get(seg, 2)
+                    if raw_amt:
+                        try:
+                            payment_amount = float(raw_amt)
+                        except ValueError:
+                            pass
+                    check_trace = self._seg_get(seg, 16)
+                elif seg.tag == "TRN":
+                    # TRN e2=check/trace number
+                    check_trace = self._seg_get(seg, 2)
+                elif seg.tag == "CLP":
+                    claim_id = self._seg_get(seg, 1) or "?"
+                    # Detect duplicate claim IDs within same transaction
+                    if claim_id in claim_ids and claim_id not in duplicate_claim_ids:
+                        duplicate_claim_ids.append(claim_id)
+                    claim_ids.append(claim_id)
+                    claim_count += 1
+                    try:
+                        billed = float(self._seg_get(seg, 2) or "0")
+                        paid = float(self._seg_get(seg, 4) or "0")
+                        allowed = float(self._seg_get(seg, 5) or "0")
+                        total_billed += billed
+                        total_paid += paid
+                        total_allowed += allowed
+                    except ValueError:
+                        pass
+                elif seg.tag == "CAS":
+                    # Accumulate total adjustment amount across all CAS segments
+                    for e_idx in range(2, min(len(seg.elements), 19)):
+                        raw = self._seg_get(seg, e_idx + 1)
+                        if raw:
+                            try:
+                                total_adjustment += float(raw)
+                            except ValueError:
+                                pass
+                elif seg.tag == "SVC":
+                    service_line_count += 1
+                elif seg.tag == "N1":
+                    entity = self._seg_get(seg, 1) or "?"
+                    name = self._seg_get(seg, 2) or "?"
+                    if entity == "PR":
+                        payer_name = name
+                    elif entity == "PE":
+                        provider_name = name
+                elif seg.tag == "PLB":
+                    plb_count += 1
+
+        summary.update({
+            "payment_amount": payment_amount,
+            "check_trace": check_trace,
+            "total_billed_amount": round(total_billed, 2),
+            "total_allowed_amount": round(total_allowed, 2),
+            "total_paid_amount": round(total_paid, 2),
+            "total_adjustment_amount": round(total_adjustment, 2),
+            "net_difference": round(total_billed - total_paid - total_adjustment, 2),
+            "claim_count": claim_count,
+            "service_line_count": service_line_count,
+            "plb_count": plb_count,
+            "duplicate_claim_ids": duplicate_claim_ids,
+            "payer_name": payer_name,
+            "provider_name": provider_name,
+        })
+        return summary
+
+    def _compute_837_summary(self, ts: TransactionSet) -> dict:
+        """Compute summary for an 837 transaction."""
+        total_billed = 0.0
+        claim_count = 0
+        service_line_count = 0
+        hl_count = 0
+        clm_ids: List[str] = []
+        duplicate_clm_ids: List[str] = []
+        billing_provider = None
+        payer_name = None
+        submitter_name = None
+        subscriber_name = None
+        patient_name = None
+        bht_id = None
+        bht_date = None
+
+        for loop in ts.loops:
+            for seg in loop.segments:
+                if seg.tag == "BHT":
+                    bht_id = self._seg_get(seg, 3)
+                    bht_date = self._seg_get(seg, 4)
+                elif seg.tag == "CLM":
+                    clm_id = self._seg_get(seg, 1) or "?"
+                    if clm_id in clm_ids and clm_id not in duplicate_clm_ids:
+                        duplicate_clm_ids.append(clm_id)
+                    clm_ids.append(clm_id)
+                    claim_count += 1
+                    try:
+                        total_billed += float(self._seg_get(seg, 2) or "0")
+                    except ValueError:
+                        pass
+                elif seg.tag in ("SV1", "SV2", "SV3"):
+                    service_line_count += 1
+                    # SV1 e2 / SV2 e2 = service amount
+                    try:
+                        total_billed += float(self._seg_get(seg, 3) or "0")
+                    except ValueError:
+                        pass
+                elif seg.tag == "HL":
+                    hl_count += 1
+                elif seg.tag == "NM1":
+                    entity = self._seg_get(seg, 1) or "?"
+                    name = " ".join(filter(None, [
+                        self._seg_get(seg, 3),
+                        self._seg_get(seg, 4),
+                    ]))
+                    if entity == "41":
+                        submitter_name = name
+                    elif entity == "40":
+                        payer_name = name
+                    elif entity == "85":
+                        billing_provider = name
+                    elif entity == "IL":
+                        subscriber_name = name
+                    elif entity == "QC":
+                        patient_name = name
+
+        return {
+            "set_id": ts.set_id,
+            "segment_count": len(ts.loops) and sum(len(l.segments) for l in ts.loops) or 0,
+            "loop_count": len(ts.loops),
+            "total_billed_amount": round(total_billed, 2),
+            "claim_count": claim_count,
+            "service_line_count": service_line_count,
+            "hl_count": hl_count,
+            "duplicate_claim_ids": duplicate_clm_ids,
+            "billing_provider": billing_provider,
+            "payer_name": payer_name,
+            "submitter_name": submitter_name,
+            "subscriber_name": subscriber_name,
+            "patient_name": patient_name,
+            "bht_id": bht_id,
+            "bht_date": bht_date,
+        }
+
+    def _parse_summary(self) -> None:
+        """Compute and attach summary dict to each TransactionSet."""
+        for ic in self.interchanges:
+            for fg in ic.groups:
+                for ts in fg.transactions:
+                    if ts.set_id == "835":
+                        ts.summary = self._compute_835_summary(ts)
+                    elif ts.set_id == "837":
+                        ts.summary = self._compute_837_summary(ts)
+                    else:
+                        ts.summary = {
+                            "set_id": ts.set_id,
+                            "segment_count": sum(len(l.segments) for l in ts.loops),
+                            "loop_count": len(ts.loops),
+                        }
+
     def to_dict(self) -> dict:
         """Return full parsed structure as a plain dict."""
         self._parse()
+        self._parse_summary()
         return {
             "version": "0.1.0",
             "interchanges": [
@@ -583,6 +781,7 @@ class X12Parser:
                                 {
                                     "header": _segment_to_dict(ts.header),
                                     "set_id": ts.set_id,
+                                    "summary": ts.summary,
                                     "loops": [_loop_to_dict(l) for l in ts.loops],
                                     "trailer": _segment_to_dict(ts.trailer),
                                 }

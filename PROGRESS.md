@@ -1,5 +1,74 @@
 # X12 Parser — Progress Log
 
+## Session: Semantic & Validation Pass (2026-04-03 — 12:41 MDT)
+
+### What Changed
+
+**parser.py — transaction summaries:**
+- Added `summary` field to `TransactionSet` dataclass
+- Added `_compute_835_summary()`: extracts `payment_amount`, `check_trace`, `total_billed_amount`, `total_allowed_amount`, `total_paid_amount`, `total_adjustment_amount`, `net_difference`, `claim_count`, `service_line_count`, `plb_count`, `duplicate_claim_ids`, `payer_name`, `provider_name`
+- Added `_compute_837_summary()`: extracts `total_billed_amount`, `claim_count`, `service_line_count`, `hl_count`, `duplicate_claim_ids`, `billing_provider`, `payer_name`, `submitter_name`, `subscriber_name`, `patient_name`, `bht_id`, `bht_date`
+- Added `_parse_summary()`: calls the right summary method per transaction set ID
+- `to_dict()` now includes `summary` block in each transaction's JSON output
+
+**validate.py — new validation checks:**
+- Added `ISA_DATE_INVALID` warning: ISA-09 (date) format check — warns if < 6 chars or non-digit
+- Added `ISA_TIME_INVALID` warning: ISA-10 (time) format check — warns if first 4 chars not HHMM
+- Added `REQUIRED_SEGMENT_MISSING` error: 835 requires BPR/TRN/N1/CLP; 837 requires BHT/NM1/CLM
+- Added `NON_NUMERIC_AMOUNT` warning: CLP e2/e3/e4, SVC e2/e3, CAS e2-e19 monetary elements checked for numeric validity
+- Added `CLAIM_ID_DUPLICATE` warning: duplicate CLP (835) or CLM (837) IDs within a transaction
+- Added `_ISSUE_RECOMMENDATIONS` catalog: maps all issue codes to actionable guidance strings
+- `format_json()` now includes `recommendation` field per issue
+- `format_report()` with `--verbose` now shows inline recommendations after each issue message
+
+**tests/test_parser.py — 9 new tests:**
+- `Test835Summary`: `test_summary_present`, `test_summary_amounts_are_numeric`, `test_summary_identifies_payer_and_provider`, `test_summary_no_duplicate_claims_in_basic_fixture`
+- `Test837Summary`: `test_summary_present`, `test_summary_identifies_parties`, `test_summary_bht_date_format`
+- `TestRich835Summary`: `test_plb_count_reflected`, `test_multiple_claims`, `test_payment_amount_from_bpr`
+
+**tests/test_validate.py — 11 new tests:**
+- `TestValidateRequiredSegments`: 835 missing BPR → REQUIRED_SEGMENT_MISSING; 837 missing CLM → REQUIRED_SEGMENT_MISSING
+- `TestValidateNumericAmounts`: CLP non-numeric billed → NON_NUMERIC_AMOUNT; SVC non-numeric billed → NON_NUMERIC_AMOUNT
+- `TestValidateDuplicateClaims`: 835 duplicate CLP ID → CLAIM_ID_DUPLICATE; 837 duplicate CLM ID → CLAIM_ID_DUPLICATE
+- `TestValidateISAFormat`: bad ISA date → ISA_DATE_INVALID; bad ISA time → ISA_TIME_INVALID
+- `TestValidateRecommendations`: JSON includes `recommendation` field; verbose text report shows `→` recommendations
+
+**README.md — updated:**
+- Transaction summaries documented with full field listing for 835 and 837
+- Validate mode now lists all new checks (required segments, numeric amounts, duplicate claim IDs, recommendations)
+- Limitations table updated to reflect v0.2 state
+- New project structure section reflecting actual fixture inventory
+
+**ROADMAP.md — new:**
+- Full gap analysis: current capabilities, partial capabilities, missing capabilities
+- Recommended phased roadmap: v0.2 (semantic hardening), v0.3 (rule-based validation), v0.4 (additional transaction types), v1.0 (production hardening)
+- Known non-goals documented
+
+### What Remains Limited
+
+*(No change to core limitations — same as prior session, plus new items below)*
+
+1. **Schema validation**: No validation of segment order, required elements, or code values against official X12 specs. `validate.py` checks envelope/structural rules only.
+2. **Loop semantics**: Loop IDs are inferred heuristically — may not match official X12 loop nomenclature (documented in README).
+3. **Delimiter handling**: Only handles standard `*`:`:`:`~` separators. Non-standard separators may fail.
+4. **Composite decomposition**: Composite elements returned as strings (`"12:345"`) — not split into sub-components.
+5. **Cross-segment semantic validation**: No reconciliation of amounts between CLP and SVC segments.
+6. **Transaction types**: Only 835 and 837 are explicitly targeted. Other transaction types may parse but are not tested.
+7. **Large file performance**: Not stress-tested with large EDI files.
+8. **Repetition separator**: ISA-11 (repetition separator) is treated as part of data, not used to split fields.
+9. **Escaped delimiters**: No handling of escaped delimiter characters within data elements.
+
+### Ready for George Review
+
+- ✅ All 98 pytest tests pass (52 parser + 46 validate)
+- ✅ All 67 run_tests.py checks pass
+- ✅ Total: 165 automated checks
+- ✅ Clean fixtures remain clean under all new validation checks
+- ✅ New validation checks verified against ad-hoc EDI snippets
+- ✅ README updated, ROADMAP.md created, PROGRESS.md logged
+
+---
+
 ## Session: Hardening Pass (2026-04-03 — 11:34 MDT)
 
 ### What Changed

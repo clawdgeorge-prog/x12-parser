@@ -61,9 +61,17 @@ ISA/IEA (interchange) → GS/GE (functional group) → ST/SE (transaction set) a
 
 Common 835 and 837 segments are detected and preserved with raw element extraction. Key segments include BPR, TRN, N1, NM1, CLP, SVC, CAS, HI, CLM, SV1, SV2, and many other common segments in the included fixtures.
 
+### Transaction summaries
+
+Each parsed transaction includes a `summary` block with computed fields:
+
+**835 summary:** `payment_amount`, `check_trace`, `total_billed_amount`, `total_allowed_amount`, `total_paid_amount`, `total_adjustment_amount`, `net_difference`, `claim_count`, `service_line_count`, `plb_count`, `duplicate_claim_ids`, `payer_name`, `provider_name`
+
+**837 summary:** `total_billed_amount`, `claim_count`, `service_line_count`, `hl_count`, `duplicate_claim_ids`, `billing_provider`, `payer_name`, `submitter_name`, `subscriber_name`, `patient_name`, `bht_id`, `bht_date`
+
 ### Output
 
-JSON with nested envelopes, transaction sets, and loops. Each segment carries its raw `elements` dict (`e1`, `e2`, …) for downstream use.
+JSON with nested envelopes, functional groups, transaction sets, loops, and per-transaction summaries. Each segment carries its raw `elements` dict (`e1`, `e2`, …) for downstream use.
 
 ---
 
@@ -84,11 +92,28 @@ python3 -m src.cli tests/fixtures/sample_835.edi -o output.json
 
 ### Validate mode
 
-Validates ISA/IEA, GS/GE, and ST/SE pairing; orphan segments; empty groups/transactions; and SE segment-count signals.
+Structural validation checks include:
+
+- ISA/IEA, GS/GE, ST/SE envelope pairing
+- Orphan segment detection (envelope segments appearing outside valid context)
+- Empty transaction / empty group detection
+- SE segment-count signal validation
+- ISA date (CCYYMMDD) and time (HHMM) format warnings
+- **Required segment checks** (BPR, TRN, N1, CLP for 835; BHT, NM1, CLM for 837)
+- **Non-numeric amount warnings** (CLP, SVC, CAS monetary fields)
+- **Duplicate claim ID warnings** (CLP for 835, CLM for 837)
+- Unknown segment tag warnings
+- **Actionable recommendations** in JSON output (`--verbose` for text)
 
 ```bash
 # Human-readable report
 python3 -m src.validate tests/fixtures/sample_835.edi
+
+# With actionable recommendations
+python3 -m src.validate tests/fixtures/sample_835.edi --verbose
+
+# JSON report with recommendations
+python3 -m src.validate tests/fixtures/sample_835.edi --json -o report.json
 
 # Write report to file
 python3 -m src.validate tests/fixtures/sample_835.edi -o report.txt
@@ -114,25 +139,28 @@ Requires Python 3.9+. No third-party dependencies.
 x12-parser/
 ├── src/
 │   ├── __init__.py       — package entry point
-│   ├── parser.py         — core parser (tokenizer, segment, loop, envelope)
+│   ├── parser.py         — core parser (tokenizer, segment, loop, envelope, summary)
 │   ├── cli.py             — parse CLI (json output)
-│   └── validate.py       — validate CLI (structural report)
+│   └── validate.py       — validate CLI (structural report + recommendations)
 ├── tests/
 │   ├── test_parser.py    — pytest unit tests
+│   ├── test_validate.py  — pytest validator tests
 │   └── fixtures/         — sample EDI files
-│       ├── sample_835.edi              — basic 835
-│       ├── sample_835_rich.edi          — richer 835 (PLB, ADJ, multi-N1)
+│       ├── sample_835.edi              — basic 835 (2 claims)
+│       ├── sample_835_rich.edi          — richer 835 (PLB, 4 LX, PER, 4 claims)
 │       ├── sample_837_prof.edi          — basic 837 professional
-│       ├── sample_837_prof_rich.edi      — richer 837 professional
-│       ├── sample_837_institutional.edi   — basic 837 institutional
+│       ├── sample_837_prof_rich.edi      — richer 837 professional (nested HL)
+│       ├── sample_837_institutional.edi   — basic 837 institutional (SV2)
 │       ├── sample_multi_transaction.edi   — multiple ST/SE in one GS/GE
 │       ├── sample_multi_interchange.edi  — multiple ISA/IEA interchanges
-│       └── sample_whitespace_irregular.edi — irregular CR/LF/space layout
+│       ├── sample_whitespace_irregular.edi — irregular CR/LF/space layout
+│       └── (edge-case fixtures for validation)
 ├── demo/
 │   ├── run.sh            — demo script (4 commands, auto-summarised)
 │   └── *.txt / *.json    — pre-generated sample outputs
 ├── DEMO.md               — demo walkthrough and sample output
 ├── run_tests.py          — manual test runner
+├── ROADMAP.md            — gap analysis and planned improvements
 ├── pyproject.toml
 └── README.md
 ```
@@ -141,16 +169,18 @@ x12-parser/
 
 ## Limitations
 
-X12 Parser v0.1.0 is a **parser and structural checker**, not a full X12 validator:
+X12 Parser is a **parser and structural checker**, not a full X12 validator:
 
 | What it does | What it doesn't do |
 |---|---|
 | Tokenise on standard delimiters and attempt ISA-based delimiter detection | Guarantee support for every non-standard delimiter variant |
-| Parse envelope structure (ISA/GS/ST/SE/GE/IEA) | Schema-validate segment order or required elements |
+| Parse envelope structure (ISA/GS/ST/SE/GE/IEA) | Schema-validate segment order against X12 spec |
 | Extract sender/receiver from ISA header | Validate X12 code values (e.g. "85" vs "86") |
 | Detect and group loops by segment leader | Produce official X12 loop IDs (output uses heuristic keys) |
-| Structural envelope validation (pairing, counts, orphans) | Cross-segment semantic reconciliation (e.g. CLP vs SVC amounts) |
+| Structural envelope validation + new semantic checks | Full TR3 schema compliance (element-level required/conditional rules) |
+| Transaction summaries with financial totals | Cross-segment semantic reconciliation (e.g. CLP billed vs SVC sum reconciliation) |
 | Preserve all segment elements as raw strings | Fully decompose composite elements into schema-aware sub-fields |
+| Non-numeric amount field warnings | Corrective auto-fixing of malformed numeric fields |
 
 **Transaction types:** Only 835, 837 Professional, and 837 Institutional are supported. 277, 278, 834, and others are not yet implemented.
 
@@ -161,9 +191,12 @@ X12 Parser v0.1.0 is a **parser and structural checker**, not a full X12 validat
 ## Running tests
 
 ```bash
-# With pytest
-PYTHONPATH=. python3 -m pytest tests/test_parser.py -v
+# With pytest (recommended)
+PYTHONPATH=. python3 -m pytest tests/test_parser.py tests/test_validate.py -v
 
 # Without pytest
 python3 run_tests.py
+
+# Both together
+python3 run_tests.py && PYTHONPATH=. python3 -m pytest tests/test_parser.py tests/test_validate.py -v
 ```

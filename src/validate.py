@@ -20,7 +20,7 @@ import json
 import sys
 import pathlib
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
@@ -271,7 +271,153 @@ class X12Validator:
                             "SE", se_pos,
                         )
 
+        # ── 8. ISA date/time format validation ──────────────────────────────
+        # ISA-09: CCYYMMDD, ISA-10: HHMM (or HHMMSS or HHMMdd - take first 4)
+        for seg in raw_segs:
+            if seg.tag == "ISA":
+                date_raw = seg.elements[8].raw.strip() if len(seg.elements) > 8 else ""
+                time_raw = seg.elements[9].raw.strip() if len(seg.elements) > 9 else ""
+                if date_raw:
+                    # Accept formats: CCYYMMDD, CCYYJJJ (julian), or just digits
+                    # Reject clearly invalid: wrong length or non-digit
+                    if len(date_raw) < 6 or not date_raw.isdigit():
+                        result.add_warning(
+                            "ISA_DATE_INVALID",
+                            f"ISA segment at position {seg.position}: ISA-09 (date) "
+                            f"has unexpected format: {date_raw!r} (expected CCYYMMDD)",
+                            "ISA", seg.position,
+                        )
+                if time_raw:
+                    # Take first 4 chars (HHMM), ignore seconds or timezone
+                    time_part = time_raw[:4]
+                    if not (len(time_part) == 4 and time_part.isdigit()):
+                        result.add_warning(
+                            "ISA_TIME_INVALID",
+                            f"ISA segment at position {seg.position}: ISA-10 (time) "
+                            f"has unexpected format: {time_raw!r} (expected HHMM)",
+                            "ISA", seg.position,
+                        )
+
+        # ── 9. Required segments per transaction type ─────────────────────────
+        # Minimal sanity check: each transaction type should have its core segments.
+        REQUIRED_BY_TYPE = {
+            "835": frozenset(("BPR", "TRN", "N1", "CLP")),
+            "837": frozenset(("BHT", "NM1", "CLM")),
+        }
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    set_id = ts.get("set_id", "?")
+                    required = REQUIRED_BY_TYPE.get(set_id)
+                    if not required:
+                        continue
+                    # Collect all tags in this transaction
+                    all_tags: set[str] = set()
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            all_tags.add(seg["tag"])
+                    missing = required - all_tags
+                    if missing:
+                        for tag in missing:
+                            result.add_error(
+                                "REQUIRED_SEGMENT_MISSING",
+                                f"Transaction {ts_idx + 1} (set {set_id}): "
+                                f"required segment {tag!r} is missing. "
+                                f"This may indicate a truncated or invalid file.",
+                                tag, 0,
+                            )
+
+        # ── 10. Non-numeric amount fields ───────────────────────────────────
+        # Check monetary elements that should always be numeric: CLP e2/e3/e4,
+        # SVC e2/e3 (billed/paid amounts), CAS e2-e19 (adjustment amounts).
+        AMOUNT_TAGS = frozenset(("CLP", "SVC", "CAS"))
+        for seg in raw_segs:
+            if seg.tag not in AMOUNT_TAGS:
+                continue
+            if seg.tag == "CLP":
+                # e2=billed, e3=allowed, e4=paid, e5=patient responsibility
+                for e_idx in (1, 2, 3, 4):  # 0-based indices
+                    if e_idx >= len(seg.elements):
+                        continue
+                    raw = seg.elements[e_idx].raw.strip() if seg.elements[e_idx].raw else ""
+                    if raw and not _is_numeric(raw):
+                        elem_name = ("billed", "allowed", "paid", "patient_resp")[e_idx - 1] if e_idx <= 4 else f"e{e_idx + 1}"
+                        result.add_warning(
+                            "NON_NUMERIC_AMOUNT",
+                            f"CLP at position {seg.position}: {elem_name} amount "
+                            f"({raw!r}) is not a valid number; "
+                            f"check for data corruption or incorrect delimiters",
+                            "CLP", seg.position,
+                        )
+            elif seg.tag == "SVC":
+                # e2=billed amount, e3=paid amount
+                for e_idx in (1, 2):
+                    if e_idx >= len(seg.elements):
+                        continue
+                    raw = seg.elements[e_idx].raw.strip() if seg.elements[e_idx].raw else ""
+                    if raw and not _is_numeric(raw):
+                        elem_name = ("billed", "paid")[e_idx - 1]
+                        result.add_warning(
+                            "NON_NUMERIC_AMOUNT",
+                            f"SVC at position {seg.position}: {elem_name} amount "
+                            f"({raw!r}) is not a valid number",
+                            "SVC", seg.position,
+                        )
+            elif seg.tag == "CAS":
+                # e2-e19: adjustment amounts
+                for e_idx in range(1, min(len(seg.elements), 19)):
+                    raw = seg.elements[e_idx].raw.strip() if seg.elements[e_idx].raw else ""
+                    if raw and not _is_numeric(raw):
+                        result.add_warning(
+                            "NON_NUMERIC_AMOUNT",
+                            f"CAS at position {seg.position}: adjustment amount "
+                            f"({raw!r}) is not a valid number",
+                            "CAS", seg.position,
+                        )
+
+        # ── 11. Duplicate claim IDs within a transaction ──────────────────────
+        # 835: CLP e1 (claim ID), 837: CLM e1 (claim ID)
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    set_id = ts.get("set_id", "?")
+                    if set_id not in ("835", "837"):
+                        continue
+                    claim_id_tag = "CLP" if set_id == "835" else "CLM"
+                    seen_ids: List[str] = []
+                    duplicate_ids: List[str] = []
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            if seg["tag"] == claim_id_tag:
+                                cid = seg["elements"].get("e1", "").strip()
+                                if cid:
+                                    if cid in seen_ids and cid not in duplicate_ids:
+                                        duplicate_ids.append(cid)
+                                    seen_ids.append(cid)
+                    for dup_id in duplicate_ids:
+                        result.add_warning(
+                            "CLAIM_ID_DUPLICATE",
+                            f"Transaction {ts_idx + 1} (set {set_id}): "
+                            f"claim ID {dup_id!r} appears more than once in the "
+                            f"same transaction; possible duplicate or resubmission",
+                            claim_id_tag, 0,
+                        )
+
         return result
+
+
+def _is_numeric(value: str) -> bool:
+    """Return True if value is a valid numeric string (int or float)."""
+    if not value:
+        return False
+    try:
+        float(value)
+        return True
+    except ValueError:
+        return False
+
+
+# Extended VALID_INNER_TAGS after the class ends
 
 
 # ── Report formatters ─────────────────────────────────────────────────────────
@@ -293,11 +439,19 @@ def format_report(result: ValidationResult, verbose: bool = False) -> str:
             for issue in errors:
                 pos = f" [pos {issue.segment_position}]" if issue.segment_position else ""
                 lines.append(f"  [{issue.code}]{pos}  {issue.message}")
+                if verbose:
+                    rec = _ISSUE_RECOMMENDATIONS.get(issue.code, "")
+                    if rec:
+                        lines.append(f"           → {rec}")
         if warnings:
             lines.append(f"\n⚠️   {len(warnings)} WARNING(S):")
             for issue in warnings:
                 pos = f" [pos {issue.segment_position}]" if issue.segment_position else ""
                 lines.append(f"  [{issue.code}]{pos}  {issue.message}")
+                if verbose:
+                    rec = _ISSUE_RECOMMENDATIONS.get(issue.code, "")
+                    if rec:
+                        lines.append(f"           → {rec}")
 
     lines.append("\n" + "=" * 60)
     if result.clean:
@@ -308,24 +462,74 @@ def format_report(result: ValidationResult, verbose: bool = False) -> str:
     return "\n".join(lines)
 
 
+# Recommendation catalog — maps issue codes to actionable guidance
+_ISSUE_RECOMMENDATIONS = {
+    "ISA_IEA_MISMATCH": "Each interchange must have exactly one ISA and one IEA trailer. "
+        "Verify the file was not truncated or corrupted during transfer.",
+    "GS_GE_MISMATCH": "Each functional group must have matching GS and GE counts. "
+        "Check that the GE trailer count matches the GS count.",
+    "ST_SE_MISMATCH": "Each transaction set must have matching ST and SE counts. "
+        "Check that the SE trailer count matches the ST count.",
+    "EMPTY_TRANSACTION": "This transaction has no body segments between ST and SE. "
+        "Verify the file was not truncated or the transaction was intentionally empty.",
+    "EMPTY_GROUP": "This functional group has no transaction sets. The GS/GE pair should "
+        "enclose one or more ST/SE pairs.",
+    "ORPHAN_ISA": "An ISA segment appeared while a prior interchange was still open. "
+        "All ISA segments must be closed with a matching IEA before the next ISA.",
+    "ORPHAN_IEA": "An IEA trailer appeared without a preceding ISA header. "
+        "Verify the file structure is correct.",
+    "ORPHAN_GS": "A GS segment appeared outside of an ISA/IEA interchange. "
+        "All functional groups must be inside an interchange.",
+    "ORPHAN_GE": "A GE trailer appeared without a preceding GS header. "
+        "Verify the functional group structure.",
+    "ORPHAN_ST": "An ST segment appeared outside of a GS/GE functional group. "
+        "All transaction sets must be inside a functional group.",
+    "ORPHAN_SE": "An SE trailer appeared without a preceding ST header. "
+        "Verify the transaction set structure.",
+    "SE_COUNT_MISMATCH": "The segment count in SE e1 does not match the actual number "
+        "of segments between ST and SE (inclusive). "
+        "Recount segments or correct the SE trailer count.",
+    "SE_NO_COUNT": "The SE trailer is missing the segment-count element (e1). "
+        "Add the correct segment count to the SE.",
+    "SE_INVALID_COUNT": "SE e1 is not a parseable integer. "
+        "Ensure SE e1 contains a valid numeric segment count.",
+    "ISA_DATE_INVALID": "ISA-09 (date) has an unexpected format. "
+        "Expected CCYYMMDD; verify the ISA header was not corrupted.",
+    "ISA_TIME_INVALID": "ISA-10 (time) has an unexpected format. "
+        "Expected HHMM; verify the ISA header was not corrupted.",
+    "REQUIRED_SEGMENT_MISSING": "A required segment for this transaction type is missing. "
+        "The file may be truncated or not a valid X12 instance of this type.",
+    "NON_NUMERIC_AMOUNT": "A monetary field contains a non-numeric value. "
+        "This may indicate a delimiter problem (e.g., a stray asterisk in an amount field) "
+        "or data corruption. Review the raw segment.",
+    "CLAIM_ID_DUPLICATE": "A claim ID appears more than once in the same transaction. "
+        "Verify whether this is an intentional resubmission or a data entry error.",
+    "UNKNOWN_SEGMENT": "An unrecognized segment tag was encountered. "
+        "This may be a typo, an unsupported optional segment, or an unsupported "
+        "transaction type. Verify the transaction set version and type.",
+}
+
+
 def format_json(result: ValidationResult) -> str:
     """JSON report for machine consumption."""
+    issues_out = []
+    for i in result.issues:
+        rec = _ISSUE_RECOMMENDATIONS.get(i.code, "No specific recommendation available.")
+        issues_out.append({
+            "severity": i.severity,
+            "code": i.code,
+            "message": i.message,
+            "segment_tag": i.segment_tag,
+            "segment_position": i.segment_position,
+            "recommendation": rec,
+        })
     return json.dumps(
         {
             "clean": result.clean,
             "issue_count": len(result.issues),
             "error_count": sum(1 for i in result.issues if i.severity == "error"),
             "warning_count": sum(1 for i in result.issues if i.severity == "warning"),
-            "issues": [
-                {
-                    "severity": i.severity,
-                    "code": i.code,
-                    "message": i.message,
-                    "segment_tag": i.segment_tag,
-                    "segment_position": i.segment_position,
-                }
-                for i in result.issues
-            ],
+            "issues": issues_out,
         },
         indent=2,
         ensure_ascii=False,
