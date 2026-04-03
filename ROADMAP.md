@@ -39,9 +39,9 @@
 - ✅ Exit codes: 0 (clean), 1 (errors), 2 (parse failure)
 
 ### Test Coverage
-- ✅ 98 pytest tests (52 parser + 46 validate)
+- ✅ 113 pytest tests (77 parser + 46 validate)
 - ✅ 67 run_tests.py checks
-- ✅ 145 total automated checks
+- ✅ 180 total automated checks
 
 ---
 
@@ -54,15 +54,15 @@ SVC composite service IDs (e.g., `"HC:99213"`) are returned as raw strings. The 
 Loop IDs are heuristic (first element of the leader segment, e.g., `CLP001`, `PR`, `IL`). They do not match official X12 loop IDs (`2100`, `2110`, etc.). Useful for grouping but not for spec compliance checking.
 
 ### Numeric amount extraction
-`total_billed_amount` in 835 summary sums CLP e2 values. If CLP segments are missing or the amount is in an unexpected position, the total may be inaccurate.
+`total_billed_amount` in 835/837 summaries sums CLP/CLM e2 values. If segments are missing or amounts are in unexpected positions, totals may be inaccurate.
 
-### Cross-segment financial reconciliation
-Not implemented. The parser does **not** reconcile:
-- CLP billed amount vs. sum of SVC billed amounts
-- CAS adjustment totals vs. CLP adjustments
-- 835 payment amount (BPR) vs. sum of CLP paid amounts
+### Cross-segment financial reconciliation (bounded)
+The 835 summary now provides:
+- CLP-vs-SVC billed/paid discrepancy flags (per-claim)
+- CAS adjustment totals per claim (via `clp_adjustment` field)
+- PLB adjustment rollup by reason code
 
-These require unambiguous segment ordering and are not safe to infer heuristically.
+These are **flags and helpers**, not full accounting truth. Reconciliation does not modify data or assert equality — it surfaces mismatches for human review.
 
 ---
 
@@ -116,9 +116,11 @@ Currently ISA-11 is treated as a space. If present and non-standard, the parser 
 3. [x] Required segment checks
 4. [x] Duplicate claim ID detection
 5. [x] Recommendations in JSON output
-6. [ ] HL hierarchy tree reconstruction for 837 (parent_child relationships)
-7. [ ] SVC composite decomposition in JSON output
-8. [ ] `extract_claims()` helper returning structured claim records with adjustments
+6. [x] **HL hierarchy tree reconstruction for 837** (parent/child, billing_provider/subscriber/patient levels)
+7. [x] **837 claim-level rollups** with service-line aggregation and discrepancy flags
+8. [x] **835 claim-level rollups** (billed/paid/adjustment per CLP, SVC aggregation, discrepancy flags, PLB summary)
+9. [ ] SVC composite decomposition in JSON output
+10. [ ] `extract_claims()` helper returning structured claim records with adjustments
 
 ### v0.3 — Rule-based Validation
 **Goal:** Catch more data quality issues without full TR3 parsing.

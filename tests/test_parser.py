@@ -547,6 +547,189 @@ class TestRich835Summary:
         assert summary["payment_amount"] == 3500.0
 
 
+# ── 837 hierarchy semantics ──────────────────────────────────────────────────
+
+class Test837Hierarchy:
+    """Verify 837 hierarchy reconstruction from HL parent-child structure."""
+
+    def test_hl_tree_present_in_summary(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "hierarchy" in summary
+        assert "hl_tree" in summary["hierarchy"]
+
+    def test_hl_tree_has_billing_provider_level(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        hl_tree = ts["summary"]["hierarchy"]["hl_tree"]
+        bp_levels = [e for e in hl_tree if e["level_role"] == "billing_provider"]
+        assert len(bp_levels) >= 1
+        assert bp_levels[0]["level_code"] == "20"
+
+    def test_hl_tree_has_subscriber_level(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        hl_tree = ts["summary"]["hierarchy"]["hl_tree"]
+        sub_levels = [e for e in hl_tree if e["level_role"] == "subscriber"]
+        assert len(sub_levels) >= 1
+        assert sub_levels[0]["level_code"] == "22"
+
+    def test_hl_parent_child_relationships(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        hl_tree = ts["summary"]["hierarchy"]["hl_tree"]
+        # Build lookup
+        by_id = {e["id"]: e for e in hl_tree}
+        # Subscriber should have billing provider as parent
+        subscriber = next((e for e in hl_tree if e["level_role"] == "subscriber"), None)
+        assert subscriber is not None
+        if subscriber["parent_id"]:
+            parent = by_id.get(subscriber["parent_id"])
+            assert parent is not None
+            assert parent["level_role"] == "billing_provider"
+
+    def test_hierarchy_has_level_names(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        h = ts["summary"]["hierarchy"]
+        # Billing provider name should be extracted from NM1 in the billing provider HL
+        assert h.get("billing_provider_name") is not None
+
+    def test_claims_list_present(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "claims" in summary
+        assert len(summary["claims"]) >= 1
+
+    def test_claim_has_service_lines(self):
+        fixture = FIXTURES / "sample_837_prof_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        claims = ts["summary"]["claims"]
+        assert any(len(cl.get("service_lines", [])) >= 1 for cl in claims)
+
+
+# ── 835 reconciliation helpers ───────────────────────────────────────────────
+
+class Test835Reconciliation:
+    """Verify 835 claim-level rollups and discrepancy flags."""
+
+    def test_claims_list_present(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "claims" in summary
+        assert len(summary["claims"]) == 2
+
+    def test_claim_has_required_fields(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        claims = ts["summary"]["claims"]
+        for cl in claims:
+            assert "claim_id" in cl
+            assert "clp_billed" in cl
+            assert "clp_paid" in cl
+            assert "svc_billed" in cl
+            assert "svc_paid" in cl
+            assert "service_line_count" in cl
+            assert "has_billed_discrepancy" in cl
+            assert "has_paid_discrepancy" in cl
+            assert "adjustment_group_codes" in cl
+
+    def test_rich_835_claims_populated(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        claims = ts["summary"]["claims"]
+        assert len(claims) == 4
+        for cl in claims:
+            assert cl["service_line_count"] >= 1
+            assert cl["svc_billed"] > 0
+
+    def test_rich_835_svc_billed_accumulated(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        claims = ts["summary"]["claims"]
+        # SVC billed amounts are reliably extracted from SVC e2 in the DTM/SVC loop
+        billed = [cl["svc_billed"] for cl in claims]
+        assert billed == [250.0, 300.0, 275.0, 450.0]
+        paid = [cl["svc_paid"] for cl in claims]
+        assert paid == [200.0, 150.0, 175.0, 300.0]
+
+    def test_discrepancies_field_present(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "discrepancies" in summary
+        assert isinstance(summary["discrepancies"], list)
+
+    def test_discrepancy_flags_when_clp_svc_mismatch(self):
+        # Create a synthetic 835 where CLP billed != SVC billed to test flag
+        from src.parser import X12Parser
+        # Structure: DTM absorbs SVC so it accumulates into the current claim.
+        # CLP billed=500, SVC billed=400 → billed_mismatch discrepancy.
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1530*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*250402*1530*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*100*ACH~"
+            "N1*PR*PAYER~"
+            "N1*PE*PROVIDER~"
+            "LX*1~"
+            "CLP*CLM001*500*1*400~"   # CLP: billed=500, status=1, paid=400
+            "CAS*CO*45*100~"
+            "DTM*472*D8*20250401~"   # DTM absorbs SVC
+            "SVC*HC:99213*400*400~"  # SVC: billed=400, paid=400
+            "DTP*472*D8*20250401~"
+            "SE*12*0001~"
+            "GE*1*1~"
+            "IEA*1*000000001~"
+        )
+        p = X12Parser(text=edi)
+        data = p.to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        # CLP billed=500, SVC billed=400 → should flag billed_mismatch
+        disc = summary["discrepancies"]
+        billed_discs = [d for d in disc if d["type"] == "billed_mismatch"]
+        assert len(billed_discs) >= 1
+        assert billed_discs[0]["clp_billed"] == 500.0
+        assert billed_discs[0]["sum_svc_billed"] == 400.0
+
+    def test_plb_summary_populated(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "plb_summary" in summary
+        assert summary["plb_count"] == 2
+        ps = summary["plb_summary"]
+        assert ps["total_plb_adjustment"] == 35.0  # CV:25 + WO:10
+        assert "CV" in ps["adjustment_by_code"]
+        assert ps["adjustment_by_code"]["CV"] == 25.0
+
+    def test_plb_summary_absent_when_no_plb(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["plb_count"] == 0
+        assert summary["plb_summary"]["total_plb_adjustment"] == 0.0
+
+
 if __name__ == "__main__":
 
     import pytest

@@ -582,6 +582,12 @@ class X12Parser:
         element positions per X12 835 specification. Note: some 835 variants
         use non-standard CLP positions; verify against your trading-partner
         implementation if amounts appear unexpectedly zero.
+
+        Includes claim-level rollups and reconciliation helpers:
+        - per-claim billed/paid/adjustment totals
+        - service-line aggregation per claim
+        - discrepancy flags for CLP-vs-SVC amount mismatches
+        - PLB-level adjustment summary
         """
         summary = {
             "set_id": ts.set_id,
@@ -604,10 +610,159 @@ class X12Parser:
         claim_ids: List[str] = []
         duplicate_claim_ids: List[str] = []
 
+        # ── Claim-level rollup (sequential loop walk) ────────────────────
+        # In the detected loop structure, CLP, LX, SVC, CAS are separate loop leaders.
+        # We walk loops sequentially: CLP starts a claim, SVC/CAS accumulate to it.
+        # NM1*QC (patient) may appear between CLP and SVC — capture the name.
+        #
+        # 835 X12 has two common structures for LX/CLP/SVC grouping:
+        #   (a) CLP inside LX loop  → handled by finding CLP in LX loop segments
+        #   (b) CLP as own loop     → handled by detecting CLP loop + following SVC
+        # Both are supported by scanning loops sequentially.
+        claims: list[dict] = []
+        discrepancies: list[dict] = []
+        current_claim: Optional[dict] = None
+
+        # PLB summary: accumulate by adjustment reason code
+        plb_by_code: dict[str, float] = {}
+
         for loop in ts.loops:
+            if loop.leader_tag == "PLB":
+                plb_count += 1
+                for seg in loop.segments:
+                    if seg.tag == "PLB":
+                        # PLB e3 = adjustment code:claim reference (e.g. "CV:CLP001")
+                        # PLB e4 = adjustment amount
+                        ref = self._seg_get(seg, 3) or ""
+                        raw_adj = self._seg_get(seg, 4) or ""
+                        if ref and raw_adj:
+                            try:
+                                adj_val = float(raw_adj)
+                                code = ref.split(":")[0] if ":" in ref else ref
+                                plb_by_code[code] = plb_by_code.get(code, 0.0) + adj_val
+                            except ValueError:
+                                pass
+                continue
+
+            if loop.leader_tag == "CLP":
+                # Close previous claim (deferred — CAS may appear after the next CLP
+                # but belong to the current claim's service lines)
+                if current_claim is not None:
+                    claims.append(current_claim)
+
+                clp_seg = loop.segments[0] if loop.segments else None
+                clp_id = self._seg_get(clp_seg, 1) or "?"
+                clp_status = self._seg_get(clp_seg, 3) or "?"
+                try:
+                    clp_billed = float(self._seg_get(clp_seg, 2) or "0")
+                    clp_paid = float(self._seg_get(clp_seg, 4) or "0")
+                    clp_allowed = float(self._seg_get(clp_seg, 5) or "0")
+                except ValueError:
+                    clp_billed = clp_paid = clp_allowed = 0.0
+
+                current_claim = {
+                    "claim_id": clp_id,
+                    "status_code": clp_status,
+                    "patient_name": None,
+                    "clp_billed": round(clp_billed, 2),
+                    "clp_allowed": round(clp_allowed, 2),
+                    "clp_paid": round(clp_paid, 2),
+                    "clp_adjustment": 0.0,
+                    "svc_billed": 0.0,
+                    "svc_paid": 0.0,
+                    "service_line_count": 0,
+                    "has_billed_discrepancy": False,
+                    "has_paid_discrepancy": False,
+                    "adjustment_group_codes": set(),
+                }
+                claim_count += 1
+                total_billed += clp_billed
+                total_paid += clp_paid
+                total_allowed += clp_allowed
+
+                if clp_id in claim_ids and clp_id not in duplicate_claim_ids:
+                    duplicate_claim_ids.append(clp_id)
+                claim_ids.append(clp_id)
+                continue
+
+            if loop.leader_tag == "CAS":
+                # Accumulate CAS adjustments into current claim.
+                # In X12 the CAS group can appear either before or after SVC
+                # within the same LX loop. For the sequential walk we assign
+                # it to whichever claim is currently open.
+                if current_claim is not None:
+                    for seg in loop.segments:
+                        if seg.tag == "CAS":
+                            grp_code = self._seg_get(seg, 2)
+                            if grp_code:
+                                current_claim["adjustment_group_codes"].add(grp_code)
+                            # CAS elements: e1=group_code, e2=reason1, e3=amount1, e4=reason2, e5=amount2...
+                            # Amounts are at odd 1-indexed positions: e3, e5, e7...
+                            for e_idx in range(3, min(len(seg.elements), 19), 2):
+                                raw = self._seg_get(seg, e_idx + 1)
+                                if raw:
+                                    try:
+                                        adj = float(raw)
+                                        current_claim["clp_adjustment"] += adj
+                                        total_adjustment += adj
+                                    except ValueError:
+                                        pass
+                continue
+
+            if loop.leader_tag in ("SVC", "SV1", "SV2", "SV3"):
+                # SVC-led loop: one service line per such loop
+                if current_claim is not None:
+                    for seg in loop.segments:
+                        if seg.tag in ("SVC", "SV1", "SV2", "SV3"):
+                            try:
+                                # SVC e2=billed, e3=paid (different from CLP where e4=paid)
+                                svc_b = float(self._seg_get(seg, 2) or "0")
+                                svc_p = float(self._seg_get(seg, 3) or "0")
+                                current_claim["svc_billed"] += svc_b
+                                current_claim["svc_paid"] += svc_p
+                            except ValueError:
+                                pass
+                    current_claim["service_line_count"] += 1
+                    service_line_count += 1
+                continue
+
+            # Other loops (LX, DTM, REF, PER, etc.) — check for embedded SVC
+            # SVC can be absorbed into non-SVC loop leaders (e.g. DTM or bare loops)
+            # Only count it if it looks like a service-line loop:
+            # - SVC present AND loop has ≤ 5 segments (avoids false positives)
+            if current_claim is not None:
+                svc_segs_in_loop = [s for s in loop.segments
+                                    if s.tag in ("SVC", "SV1", "SV2", "SV3")]
+                if svc_segs_in_loop and len(loop.segments) <= 5:
+                    for seg in svc_segs_in_loop:
+                        try:
+                            svc_b = float(self._seg_get(seg, 2) or "0")
+                            svc_p = float(self._seg_get(seg, 3) or "0")
+                            current_claim["svc_billed"] += svc_b
+                            current_claim["svc_paid"] += svc_p
+                        except ValueError:
+                            pass
+                    current_claim["service_line_count"] += len(svc_segs_in_loop)
+                    service_line_count += len(svc_segs_in_loop)
+                continue
+
+            if loop.leader_tag == "NM1" and loop.leader_code == "QC":
+                # Patient NM1 — capture name for current claim
+                if current_claim is not None and current_claim["patient_name"] is None:
+                    for seg in loop.segments:
+                        if seg.tag == "NM1":
+                            name = " ".join(filter(None, [
+                                self._seg_get(seg, 3),
+                                self._seg_get(seg, 4),
+                            ]))
+                            if name:
+                                current_claim["patient_name"] = name
+                            break
+                continue
+
+            # Other loops (BPR, TRN, DTM, N1, REF, PER, LX header, etc.)
             for seg in loop.segments:
                 if seg.tag == "BPR":
-                    # BPR e1=payment/method, e2=amount, e16=trace
                     raw_amt = self._seg_get(seg, 2)
                     if raw_amt:
                         try:
@@ -616,35 +771,7 @@ class X12Parser:
                             pass
                     check_trace = self._seg_get(seg, 16)
                 elif seg.tag == "TRN":
-                    # TRN e2=check/trace number
                     check_trace = self._seg_get(seg, 2)
-                elif seg.tag == "CLP":
-                    claim_id = self._seg_get(seg, 1) or "?"
-                    # Detect duplicate claim IDs within same transaction
-                    if claim_id in claim_ids and claim_id not in duplicate_claim_ids:
-                        duplicate_claim_ids.append(claim_id)
-                    claim_ids.append(claim_id)
-                    claim_count += 1
-                    try:
-                        billed = float(self._seg_get(seg, 2) or "0")
-                        paid = float(self._seg_get(seg, 4) or "0")
-                        allowed = float(self._seg_get(seg, 5) or "0")
-                        total_billed += billed
-                        total_paid += paid
-                        total_allowed += allowed
-                    except ValueError:
-                        pass
-                elif seg.tag == "CAS":
-                    # Accumulate total adjustment amount across all CAS segments
-                    for e_idx in range(2, min(len(seg.elements), 19)):
-                        raw = self._seg_get(seg, e_idx + 1)
-                        if raw:
-                            try:
-                                total_adjustment += float(raw)
-                            except ValueError:
-                                pass
-                elif seg.tag == "SVC":
-                    service_line_count += 1
                 elif seg.tag == "N1":
                     entity = self._seg_get(seg, 1) or "?"
                     name = self._seg_get(seg, 2) or "?"
@@ -652,8 +779,37 @@ class X12Parser:
                         payer_name = name
                     elif entity == "PE":
                         provider_name = name
-                elif seg.tag == "PLB":
-                    plb_count += 1
+
+        if current_claim is not None:
+            claims.append(current_claim)
+
+        # ── Post-pass: discrepancy checks ─────────────────────────────────
+        for cl in claims:
+            billed_diff = round(abs(cl["clp_billed"] - cl["svc_billed"]), 2)
+            if cl["clp_billed"] > 0 and billed_diff > 0.01:
+                cl["has_billed_discrepancy"] = True
+                discrepancies.append({
+                    "type": "billed_mismatch",
+                    "claim_id": cl["claim_id"],
+                    "clp_billed": cl["clp_billed"],
+                    "sum_svc_billed": round(cl["svc_billed"], 2),
+                    "difference": billed_diff,
+                    "note": "CLP billed amount differs from sum of SVC billed amounts; "
+                            "verify CLP position 2 matches individual SVC amounts",
+                })
+            paid_diff = round(abs(cl["clp_paid"] - cl["svc_paid"]), 2)
+            if cl["clp_paid"] > 0 and paid_diff > 0.01:
+                cl["has_paid_discrepancy"] = True
+                discrepancies.append({
+                    "type": "paid_mismatch",
+                    "claim_id": cl["claim_id"],
+                    "clp_paid": cl["clp_paid"],
+                    "sum_svc_paid": round(cl["svc_paid"], 2),
+                    "difference": paid_diff,
+                    "note": "CLP paid amount differs from sum of SVC paid amounts; "
+                            "verify CLP position 4 matches individual SVC payment",
+                })
+            cl["adjustment_group_codes"] = sorted(cl["adjustment_group_codes"])
 
         summary.update({
             "payment_amount": payment_amount,
@@ -669,11 +825,24 @@ class X12Parser:
             "duplicate_claim_ids": duplicate_claim_ids,
             "payer_name": payer_name,
             "provider_name": provider_name,
+            # Reconciliation helpers
+            "claims": claims,
+            "discrepancies": discrepancies,
+            "plb_summary": {
+                "adjustment_by_code": {k: round(v, 2) for k, v in plb_by_code.items()},
+                "total_plb_adjustment": round(sum(plb_by_code.values()), 2),
+            },
         })
         return summary
 
     def _compute_837_summary(self, ts: TransactionSet) -> dict:
-        """Compute summary for an 837 transaction."""
+        """
+        Compute summary for an 837 transaction.
+
+        Includes hierarchy reconstruction (billing provider / subscriber / patient
+        levels from HL parent-child structure) and structured claim records
+        with service-line aggregation.
+        """
         total_billed = 0.0
         claim_count = 0
         service_line_count = 0
@@ -688,6 +857,180 @@ class X12Parser:
         bht_id = None
         bht_date = None
 
+        # ── Hierarchy reconstruction ─────────────────────────────────────
+        # Build HL parent-child tree.  X12 HL format:
+        #   HL*01*parent*level_code*hier_child_code
+        #   e1=ID, e2=parent_ID (absent for root), e3=level_code, e4=child_code
+        # Level codes: 20=billing provider, 22=subscriber, 23=patient
+        hl_by_id: dict[str, dict] = {}
+        hl_sequence: list[dict] = []   # preserves file order
+        for loop in ts.loops:
+            for seg in loop.segments:
+                if seg.tag == "HL":
+                    hl_id = self._seg_get(seg, 1) or ""
+                    hl_parent = self._seg_get(seg, 2) or ""
+                    hl_level = self._seg_get(seg, 3) or ""
+                    hl_child = self._seg_get(seg, 4) or ""
+                    entry = {
+                        "id": hl_id,
+                        "parent_id": hl_parent,
+                        "level_code": hl_level,
+                        "child_code": hl_child,
+                        "loop": loop,
+                    }
+                    hl_by_id[hl_id] = entry
+                    hl_sequence.append(entry)
+
+        # Identify hierarchy levels
+        billing_provider_hl = None
+        subscriber_hl = None
+        patient_hl = None
+        for entry in hl_sequence:
+            lc = entry["level_code"]
+            if lc == "20" and billing_provider_hl is None:
+                billing_provider_hl = entry
+            elif lc == "22" and subscriber_hl is None:
+                subscriber_hl = entry
+            elif lc == "23" and patient_hl is None:
+                patient_hl = entry
+
+        # In the detected loop structure, NM1 is often a separate loop leader that
+        # immediately follows its associated HL loop. We scan loops sequentially
+        # and attach NM1 names to the most recent open HL level.
+        # Valid entity qualifiers per level:
+        #   level 20 (billing provider): NM1 qualifiers 41, 85
+        #   level 22 (subscriber):      NM1 qualifiers IL, QC, PR
+        #   level 23 (patient):          NM1 qualifiers QC, IL
+        VALID_BP_QUALIFIERS = frozenset(("41", "85"))
+        VALID_SUB_QUALIFIERS = frozenset(("IL", "QC", "PR"))
+
+        last_hl_entry: Optional[dict] = None
+        for loop in ts.loops:
+            if loop.leader_tag == "HL":
+                # Find corresponding hl_entry
+                for e in hl_sequence:
+                    if e["loop"] is loop:
+                        last_hl_entry = e
+                        break
+            elif loop.leader_tag == "NM1":
+                if last_hl_entry is not None:
+                    seg0 = loop.segments[0] if loop.segments else None
+                    if seg0:
+                        qual = self._seg_get(seg0, 1) or ""
+                        lc = last_hl_entry["level_code"]
+                        if lc == "20" and qual in VALID_BP_QUALIFIERS:
+                            last_hl_entry["_nm1_name"] = " ".join(filter(None, [
+                                self._seg_get(seg0, 3),
+                                self._seg_get(seg0, 4),
+                            ])) or None
+                        elif lc in ("22", "23") and qual in VALID_SUB_QUALIFIERS:
+                            last_hl_entry["_nm1_name"] = " ".join(filter(None, [
+                                self._seg_get(seg0, 3),
+                                self._seg_get(seg0, 4),
+                            ])) or None
+
+        def _hl_nm1_name(hl_entry: Optional[dict]) -> Optional[str]:
+            if hl_entry is None:
+                return None
+            return hl_entry.get("_nm1_name")
+
+        hierarchy = {
+            "billing_provider_hl_id": billing_provider_hl["id"] if billing_provider_hl else None,
+            "subscriber_hl_id": subscriber_hl["id"] if subscriber_hl else None,
+            "patient_hl_id": patient_hl["id"] if patient_hl else None,
+            "billing_provider_name": _hl_nm1_name(billing_provider_hl),
+            "subscriber_name": _hl_nm1_name(subscriber_hl),
+            "patient_name": _hl_nm1_name(patient_hl),
+            "hl_tree": [
+                {
+                    "id": e["id"],
+                    "parent_id": e["parent_id"] or None,
+                    "level_code": e["level_code"],
+                    "child_code": e["child_code"],
+                    "level_role": (
+                        "billing_provider" if e["level_code"] == "20"
+                        else "subscriber" if e["level_code"] == "22"
+                        else "patient" if e["level_code"] == "23"
+                        else "other"
+                    ),
+                }
+                for e in hl_sequence
+            ],
+        }
+
+        # ── Claim + service-line aggregation ──────────────────────────────
+        # Walk loops in order. CLM starts a claim; LX SV1/SV2 are service lines.
+        claims: list[dict] = []
+        current_claim: Optional[dict] = None
+        current_claim_loops: List[Loop] = []
+        current_clm_loop: Optional[Loop] = None
+
+        for loop in ts.loops:
+            if loop.leader_tag in ("SV1", "SV2", "SV3"):
+                # Service line — attach to current claim
+                if current_claim is not None:
+                    # Accumulate from this service-line loop
+                    sv_billed = 0.0
+                    sv_paid = 0.0
+                    svc_segment = None
+                    for seg in loop.segments:
+                        if seg.tag in ("SV1", "SV2", "SV3"):
+                            svc_segment = seg
+                            try:
+                                sv_billed += float(self._seg_get(seg, 3) or "0")
+                                sv_paid += float(self._seg_get(seg, 4) or "0")
+                            except ValueError:
+                                pass
+                    if current_claim is not None:
+                        current_claim["service_lines"].append({
+                            "loop_id": loop.id,
+                            "billed": round(sv_billed, 2),
+                            "paid": round(sv_paid, 2),
+                            "service_line_count": 1,
+                        })
+                        current_claim["total_svc_billed"] += sv_billed
+                        current_claim["total_svc_paid"] += sv_paid
+                        service_line_count += 1
+            elif loop.leader_tag == "CLM":
+                # New claim
+                if current_claim is not None:
+                    claims.append(current_claim)
+                clm_seg = loop.segments[0] if loop.segments else None
+                clm_id = self._seg_get(clm_seg, 1) if clm_seg else None
+                clm_billed = 0.0
+                try:
+                    clm_billed = float(self._seg_get(clm_seg, 2) or "0")
+                except ValueError:
+                    pass
+                current_claim = {
+                    "claim_id": clm_id,
+                    "clp_billed": round(clm_billed, 2),
+                    "total_svc_billed": 0.0,
+                    "total_svc_paid": 0.0,
+                    "service_lines": [],
+                    "has_discrepancy": False,
+                    "discrepancy_reason": None,
+                }
+                claim_count += 1
+            else:
+                # Header/entity segments — attach to current claim if any
+                if current_claim is not None:
+                    current_claim_loops.append(loop)
+
+        if current_claim is not None:
+            claims.append(current_claim)
+
+        # Check billed amount discrepancies (CLP vs sum of SVC)
+        for cl in claims:
+            diff = round(abs(cl["clp_billed"] - cl["total_svc_billed"]), 2)
+            if cl["clp_billed"] > 0 and diff > 0.01:
+                cl["has_discrepancy"] = True
+                cl["discrepancy_reason"] = (
+                    f"CLP billed ({cl['clp_billed']}) differs from "
+                    f"sum of SVC billed ({round(cl['total_svc_billed'], 2)})"
+                )
+
+        # ── Overall totals (scan remaining segments) ─────────────────────
         for loop in ts.loops:
             for seg in loop.segments:
                 if seg.tag == "BHT":
@@ -698,16 +1041,8 @@ class X12Parser:
                     if clm_id in clm_ids and clm_id not in duplicate_clm_ids:
                         duplicate_clm_ids.append(clm_id)
                     clm_ids.append(clm_id)
-                    claim_count += 1
                     try:
                         total_billed += float(self._seg_get(seg, 2) or "0")
-                    except ValueError:
-                        pass
-                elif seg.tag in ("SV1", "SV2", "SV3"):
-                    service_line_count += 1
-                    # SV1 e2 / SV2 e2 = service amount
-                    try:
-                        total_billed += float(self._seg_get(seg, 3) or "0")
                     except ValueError:
                         pass
                 elif seg.tag == "HL":
@@ -745,6 +1080,9 @@ class X12Parser:
             "patient_name": patient_name,
             "bht_id": bht_id,
             "bht_date": bht_date,
+            # New hierarchy and claims fields
+            "hierarchy": hierarchy,
+            "claims": claims,
         }
 
     def _parse_summary(self) -> None:

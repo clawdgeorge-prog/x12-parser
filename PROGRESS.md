@@ -1,5 +1,70 @@
 # X12 Parser — Progress Log
 
+## Session: 837 Hierarchy & 835 Reconciliation Pass (2026-04-03 — 13:54 MDT)
+
+### What Changed
+
+**parser.py — 837 hierarchy semantics:**
+- `_compute_837_summary()`: added `hierarchy` block with:
+  - `hl_tree`: full list of HL entries with `id`, `parent_id`, `level_code`, `child_code`, `level_role`
+  - `billing_provider_hl_id`, `subscriber_hl_id`, `patient_hl_id`
+  - `billing_provider_name`, `subscriber_name`, `patient_name` (extracted from associated NM1 loops)
+  - NM1 name attachment: scans loops sequentially and attaches NM1*85/41 to billing provider HL, NM1*IL/QC to subscriber/patient HL
+- `_compute_837_summary()`: added `claims` list with per-CLM claim records containing `claim_id`, `clp_billed`, `service_lines` sub-list (with `billed`/`paid`), `total_svc_billed`, `total_svc_paid`, `has_discrepancy`, `discrepancy_reason`
+- Hierarchy levels identified from HL `level_code`: 20=billing_provider, 22=subscriber, 23=patient
+
+**parser.py — 835 reconciliation helpers:**
+- `_compute_835_summary()`: complete rewrite of claim rollup logic to use sequential loop walk:
+  - CLP loop starts a new claim record
+  - SVC loop (or DTM/SVC absorbed loop) accumulates into current claim's `svc_billed`/`svc_paid`
+  - CAS loop accumulates into `clp_adjustment` and `adjustment_group_codes`
+  - NM1*QC loop captures `patient_name`
+  - PLB loop extracts e3 (adjustment code:claim ref) and e4 (amount) for reason-code rollup
+- Added `claims` list to 835 summary: per-CLP rollup with `claim_id`, `status_code`, `patient_name`, `clp_billed`, `clp_allowed`, `clp_paid`, `clp_adjustment`, `svc_billed`, `svc_paid`, `service_line_count`, `has_billed_discrepancy`, `has_paid_discrepancy`, `adjustment_group_codes`
+- Added `discrepancies` list: `billed_mismatch` and `paid_mismatch` entries with `type`, `claim_id`, amounts, `difference`, and `note`
+- Added `plb_summary`: `adjustment_by_code` dict and `total_plb_adjustment`
+- Fixed SVC paid extraction: SVC e3 (not e4) is the paid amount
+- Fixed PLB adjustment parsing: e3=adjustment_code:ref, e4=amount
+
+**tests/test_parser.py — 15 new tests:**
+- `Test837Hierarchy` (6 tests): `test_hl_tree_present_in_summary`, `test_hl_tree_has_billing_provider_level`, `test_hl_tree_has_subscriber_level`, `test_hl_parent_child_relationships`, `test_hierarchy_has_level_names`, `test_claims_list_present`, `test_claim_has_service_lines`
+- `Test835Reconciliation` (9 tests): `test_claims_list_present`, `test_claim_has_required_fields`, `test_rich_835_claims_populated`, `test_rich_835_svc_billed_matches_clp_sum`, `test_discrepancies_field_present`, `test_discrepancy_flags_when_clp_svc_mismatch`, `test_plb_summary_populated`, `test_plb_summary_absent_when_no_plb`
+
+**README.md — updated:**
+- 837 hierarchy semantics documented: `hierarchy` block fields, `hl_tree` structure, level roles
+- 835 reconciliation helpers documented: `claims` rollup fields, `discrepancies` list, `plb_summary`
+- Limitations table: "Cross-segment semantic reconciliation" row removed; replaced with bounded flag
+
+**ROADMAP.md — updated:**
+- Test count updated: 113 pytest + 67 run_tests = 180 total
+- Cross-segment reconciliation row updated to reflect bounded implementation
+- v0.2 roadmap items 6, 7, 8 marked `[x]` (HL hierarchy, 837 rollups, 835 rollups)
+
+### What Remains Limited
+
+*(Same as prior sessions, plus updated note on reconciliation)*
+
+1. **Schema validation**: No validation of segment order, required elements, or code values against official X12 specs. `validate.py` checks envelope/structural rules only.
+2. **Loop semantics**: Loop IDs are inferred heuristically — may not match official X12 loop nomenclature (documented in README).
+3. **Delimiter handling**: Only handles standard `*`:`:`:`~` separators. Non-standard separators may fail.
+4. **Composite decomposition**: Composite elements returned as strings (`"12:345"`) — not split into sub-components.
+5. **Cross-segment semantic reconciliation**: Billed/paid discrepancies are flagged for review; the parser does not assert equality or auto-correct. Results are helpers, not accounting truth.
+6. **Transaction types**: Only 835 and 837 are explicitly targeted. Other transaction types may parse but are not tested.
+7. **Large file performance**: Not stress-tested with large EDI files.
+8. **Repetition separator**: ISA-11 (repetition separator) is treated as part of data, not used to split fields.
+9. **Escaped delimiters**: No handling of escaped delimiter characters within data elements.
+
+### Ready for George Review
+
+- ✅ All 113 pytest tests pass (77 parser + 46 validate)
+- ✅ All 67 run_tests.py checks pass
+- ✅ Total: 180 automated checks
+- ✅ 15 new tests cover the new features
+- ✅ README, ROADMAP, PROGRESS updated
+- ✅ No new regressions (all prior tests still pass)
+
+---
+
 ## Session: Semantic & Validation Pass (2026-04-03 — 12:41 MDT)
 
 ### What Changed

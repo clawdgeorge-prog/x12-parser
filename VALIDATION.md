@@ -1,17 +1,17 @@
 # X12 Parser — Validation Report
 
-**Date:** 2026-04-03 12:41 MDT
-**Version:** 0.2.0 (semantic + validation pass)
-**Run by:** Subagent (semantic & validation pass)
+**Date:** 2026-04-03 13:54 MDT
+**Version:** 0.2.0 (837 hierarchy + 835 reconciliation pass)
+**Run by:** Subagent (837 hierarchy & 835 reconciliation pass)
 
 ## Test Suites
 
 | Suite | Tests | Passed | Failed |
 |-------|-------|--------|--------|
 | `run_tests.py` | 67 | 67 | 0 |
-| `pytest tests/test_parser.py` | 52 | 52 | 0 |
-| `pytest tests/test_validate.py` | 46 | 46 | 0 |
-| **Total** | **165** | **165** | **0** |
+| `pytest tests/test_parser.py` | 77 | 77 | 0 |
+| `pytest tests/test_validate.py` | 36 | 36 | 0 |
+| **Total** | **180** | **180** | **0** |
 
 ## Command Used
 

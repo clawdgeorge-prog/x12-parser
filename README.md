@@ -67,7 +67,25 @@ Each parsed transaction includes a `summary` block with computed fields:
 
 **835 summary:** `payment_amount`, `check_trace`, `total_billed_amount`, `total_allowed_amount`, `total_paid_amount`, `total_adjustment_amount`, `net_difference`, `claim_count`, `service_line_count`, `plb_count`, `duplicate_claim_ids`, `payer_name`, `provider_name`
 
-**837 summary:** `total_billed_amount`, `claim_count`, `service_line_count`, `hl_count`, `duplicate_claim_ids`, `billing_provider`, `payer_name`, `submitter_name`, `subscriber_name`, `patient_name`, `bht_id`, `bht_date`
+**837 summary:** `total_billed_amount`, `claim_count`, `service_line_count`, `hl_count`, `duplicate_claim_ids`, `billing_provider`, `payer_name`, `submitter_name`, `subscriber_name`, `patient_name`, `bht_id`, `bht_date`, `hierarchy`, `claims`
+
+**837 hierarchy semantics** — the `hierarchy` block provides:
+- `hl_tree`: full list of HL segments with `id`, `parent_id`, `level_code`, `child_code`, and `level_role` (`billing_provider` / `subscriber` / `patient` / `other`)
+- `billing_provider_name`, `subscriber_name`, `patient_name`: entity names extracted from the corresponding NM1 loops
+- `billing_provider_hl_id`, `subscriber_hl_id`, `patient_hl_id`: HL segment IDs for each hierarchy level
+
+The `claims` list provides one entry per CLM segment with `claim_id`, `clp_billed`, service-line sub-aggregation, and a `has_discrepancy` flag when CLP billed differs from the sum of SV1/SV2 billed amounts.
+
+**835 reconciliation helpers** — the `claims` list provides per-CLP rollups including:
+- `clp_billed`, `clp_paid`, `clp_allowed`, `clp_adjustment` (from CLP and CAS segments)
+- `svc_billed`, `svc_paid` (sum of SVC service lines within the claim)
+- `service_line_count`
+- `has_billed_discrepancy` / `has_paid_discrepancy` flags
+- `adjustment_group_codes` (CAS group codes present on the claim)
+
+The `discrepancies` list at transaction level contains one entry per flagged mismatch with `type`, `claim_id`, amounts, and a `note` with guidance.
+
+The `plb_summary` block provides `adjustment_by_code` (PLB reason code → total amount) and `total_plb_adjustment` for provider-level adjustments.
 
 ### Output
 
@@ -173,12 +191,12 @@ X12 Parser is a **parser and structural checker**, not a full X12 validator:
 
 | What it does | What it doesn't do |
 |---|---|
-| Tokenise on standard delimiters and attempt ISA-based delimiter detection | Guarantee support for every non-standard delimiter variant |
+| Tokenise on standard X12 delimiters (`*`, `:`, `~`) and tolerate irregular whitespace/newlines | Guarantee support for non-standard delimiter variants |
 | Parse envelope structure (ISA/GS/ST/SE/GE/IEA) | Schema-validate segment order against X12 spec |
 | Extract sender/receiver from ISA header | Validate X12 code values (e.g. "85" vs "86") |
 | Detect and group loops by segment leader | Produce official X12 loop IDs (output uses heuristic keys) |
 | Structural envelope validation + new semantic checks | Full TR3 schema compliance (element-level required/conditional rules) |
-| Transaction summaries with financial totals | Cross-segment semantic reconciliation (e.g. CLP billed vs SVC sum reconciliation) |
+| Transaction summaries with financial totals + 837 hierarchy semantics | Cross-segment semantic reconciliation — billed/paid discrepancies flagged but not auto-corrected |
 | Preserve all segment elements as raw strings | Fully decompose composite elements into schema-aware sub-fields |
 | Non-numeric amount field warnings | Corrective auto-fixing of malformed numeric fields |
 
