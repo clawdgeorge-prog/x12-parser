@@ -167,28 +167,15 @@ class X12Validator:
             if s.tag in ("ISA", "IEA", "GS", "GE", "ST", "SE"):
                 envelope_positions.add(s.position)
 
-        #    ISA header occupies positions 1 through the first ISA's end
-        #    (ISA is always a single raw segment at its declared position)
-        isa_positions = [s.position for s in raw_segs if s.tag == "ISA"]
-        if isa_positions:
-            # The ISA segment itself is valid; anything between ISA and first GS is orphan
-            first_gs = next((s.position for s in raw_segs if s.tag == "GS"), None)
-            if first_gs:
-                for s in raw_segs:
-                    if s.tag not in ("ISA", "IEA", "GS", "GE", "ST", "SE", "SE") \
-                       and not envelope_positions.intersection(
-                           {s.position - 1, s.position, s.position + 1}):
-                        pass  # handled below
-
-        #    More precise: find segments that fall between envelope boundaries
-        #    but are not valid inner segments
+        # Well-known inner-segment tags for orphan detection.
+        # Covers 835/837 body segments; unknown tags generate a warning.
         VALID_INNER_TAGS = frozenset((
             "BPR", "TRN", "DTM", "N1", "N3", "N4", "REF", "LX", "CLP", "CAS",
             "NM1", "SVC", "ADJ", "DTP", "BHT", "HL", "PER", "SBR", "HI",
             "SV1", "SV2", "SV3", "SV4", "SV5", "DMG", "AMT", "QTY", "CTP",
             "HCP", "CUR", "NTE", "PAT", "LIN", "CR1", "CR2", "CR3", "CR4",
             "CR5", "RDM", "PLB", "RMR", "ENT", "NME", "NX1", "K1",
-            "CLM", "PLB", "BPR",
+            "CLM", "BPR", "LQ", "F9", "N2", "G93",
         ))
 
         # Identify orphan ISA/IEA/GS/GE segments that appear outside interchanges
@@ -244,8 +231,13 @@ class X12Validator:
         for ic in data.get("interchanges", []):
             for fg in ic.get("functional_groups", []):
                 for ts_idx, ts in enumerate(fg.get("transactions", [])):
-                    se_seg = ts.get("trailer", {})
+                    se_seg = ts.get("trailer")
+                    st_seg = ts.get("header")
+                    # If SE is missing entirely (orphan SE caught above), skip count check
                     if not se_seg or se_seg.get("tag") != "SE":
+                        continue
+                    # If ST is also missing, nothing to check
+                    if not st_seg or st_seg.get("tag") != "ST":
                         continue
                     e1 = se_seg.get("elements", {}).get("e1")
                     if e1 is None:
@@ -263,16 +255,18 @@ class X12Validator:
                         )
                         continue
                     # Actual: ST (1) + body segments + SE (1)
-                    st_pos = ts["header"].get("position", 0)
+                    st_pos = st_seg.get("position", 0)
                     se_pos = se_seg.get("position", 0)
                     actual_count = sum(
                         1 for s in raw_segs
                         if st_pos <= s.position <= se_pos
                     )
+                    st_control = st_seg.get("elements", {}).get("e2", "?")
                     if declared_count != actual_count:
                         result.add_error(
                             "SE_COUNT_MISMATCH",
-                            f"Transaction {ts_idx+1}: SE declares {declared_count} segments, "
+                            f"Transaction {ts_idx+1} (ST*...*{st_control}): "
+                            f"SE declares {declared_count} segments, "
                             f"but found {actual_count} (positions {st_pos}–{se_pos})",
                             "SE", se_pos,
                         )
@@ -368,27 +362,9 @@ def main() -> None:
     result = validator.validate()
 
     if args.json:
-        indent = None if args.compact else 2
-        text = json.dumps(
-            {
-                "clean": result.clean,
-                "issue_count": len(result.issues),
-                "error_count": sum(1 for i in result.issues if i.severity == "error"),
-                "warning_count": sum(1 for i in result.issues if i.severity == "warning"),
-                "issues": [
-                    {
-                        "severity": i.severity,
-                        "code": i.code,
-                        "message": i.message,
-                        "segment_tag": i.segment_tag,
-                        "segment_position": i.segment_position,
-                    }
-                    for i in result.issues
-                ],
-            },
-            indent=indent,
-            ensure_ascii=False,
-        )
+        text = format_json(result)
+        if args.compact:
+            text = json.dumps(json.loads(text), separators=(",", ":"))
     else:
         text = format_report(result, verbose=args.verbose)
 

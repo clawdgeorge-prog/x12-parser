@@ -1,5 +1,47 @@
 # X12 Parser — Progress Log
 
+## Session: Hardening Pass (2026-04-03 — 11:34 MDT)
+
+### What Changed
+
+**validate.py — bug fixes and quality improvements:**
+- Removed duplicate entries in `VALID_INNER_TAGS` (`"PLB"` and `"BPR"` each appeared twice)
+- Removed dead code block (`envelope_positions` / `isa_positions` section that had no effect)
+- Added missing common X12 tags to `VALID_INNER_TAGS`: `LQ`, `F9`, `N2`, `G93`
+- Fixed SE count check to guard against missing trailer (added `st_seg` null-check)
+- Improved `SE_COUNT_MISMATCH` message to include ST control number (e.g. `ST*...*0001`)
+- Refactored `main()` CLI to use `format_json()` instead of duplicating JSON generation code
+
+**New malformed fixtures (7 files added):**
+- `sample_missing_se.edi` — SE present but wrong declared count (9 vs 10)
+- `sample_missing_ge.edi` — GE segment entirely missing
+- `sample_missing_iea.edi` — IEA segment entirely missing
+- `sample_empty_transaction.edi` — ST immediately followed by SE, no body
+- `sample_trailing_whitespace.edi` — same as sample_835 with trailing spaces/blank lines
+- `sample_se_count_wrong.edi` — SE declares 20 segments, actual is 10
+- `sample_orphan_body_segment.edi` — BPR body segment appears between ISA and GS
+
+**tests/test_validate.py — new pytest suite (26 tests):**
+- 8 clean-fixture validation tests (all well-formed fixtures pass with zero errors)
+- 3 missing-envelope-segment tests (missing GE, IEA, wrong SE count)
+- 1 empty-transaction test
+- 2 SE-count-mismatch tests (including message content check)
+- 1 orphan-body-segment test
+- 3 ValidationResult model unit tests
+- 5 exit-code tests (0=clean, 1=errors, 2=not found)
+- 3 JSON output tests (valid JSON, clean=true, dirty=false with correct codes)
+
+**VALIDATION.md — refreshed:**
+- Updated fixture table (now 15 fixtures, 8 pass CLEAN, 7 produce expected errors)
+- Updated test count: 145 total (67 + 52 + 26)
+- New bug fixes table entry for this pass
+
+### What Remains Limited
+
+*(No change — same limitations as prior session.)*
+
+---
+
 ## This Session: Closure Pass (2026-04-03)
 
 ### What Changed

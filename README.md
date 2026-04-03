@@ -59,7 +59,7 @@ ISA/IEA (interchange) → GS/GE (functional group) → ST/SE (transaction set) a
 
 ### Segment coverage
 
-All standard 835 and 837 segments are detected and preserved with full element decomposition. Key segments include BPR, TRN, N1, NM1, CLP, SVC, CAS, HI, CLM, SV1, SV2, and 30+ more.
+Common 835 and 837 segments are detected and preserved with raw element extraction. Key segments include BPR, TRN, N1, NM1, CLP, SVC, CAS, HI, CLM, SV1, SV2, and many other common segments in the included fixtures.
 
 ### Output
 
@@ -145,12 +145,12 @@ X12 Parser v0.1.0 is a **parser and structural checker**, not a full X12 validat
 
 | What it does | What it doesn't do |
 |---|---|
-| Tokenise on standard X12 delimiters | Handle non-standard delimiter sets |
+| Tokenise on standard delimiters and attempt ISA-based delimiter detection | Guarantee support for every non-standard delimiter variant |
 | Parse envelope structure (ISA/GS/ST/SE/GE/IEA) | Schema-validate segment order or required elements |
 | Extract sender/receiver from ISA header | Validate X12 code values (e.g. "85" vs "86") |
 | Detect and group loops by segment leader | Produce official X12 loop IDs (output uses heuristic keys) |
 | Structural envelope validation (pairing, counts, orphans) | Cross-segment semantic reconciliation (e.g. CLP vs SVC amounts) |
-| Preserve all segment elements as raw strings | Decompose composite elements (e.g. `12:345` → sub-fields) |
+| Preserve all segment elements as raw strings | Fully decompose composite elements into schema-aware sub-fields |
 
 **Transaction types:** Only 835, 837 Professional, and 837 Institutional are supported. 277, 278, 834, and others are not yet implemented.
 

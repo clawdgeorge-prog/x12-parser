@@ -1,8 +1,8 @@
 # X12 Parser — Validation Report
 
-**Date:** 2026-04-03 07:45 MDT
+**Date:** 2026-04-03 11:34 MDT
 **Version:** 0.1.0
-**Run by:** Subagent (closure pass)
+**Run by:** Subagent (hardening pass — validator + edge cases)
 
 ## Test Suites
 
@@ -10,7 +10,8 @@
 |-------|-------|--------|--------|
 | `run_tests.py` | 67 | 67 | 0 |
 | `pytest tests/test_parser.py` | 52 | 52 | 0 |
-| **Total** | **119** | **119** | **0** |
+| `pytest tests/test_validate.py` | 26 | 26 | 0 |
+| **Total** | **145** | **145** | **0** |
 
 ## Command Used
 
@@ -18,7 +19,7 @@
 cd /Users/georgeclawd/.openclaw/agents/coder/x12-parser
 find . -name __pycache__ -exec rm -rf {} +
 python3 run_tests.py
-python3 -m pytest tests/test_parser.py -v
+python3 -m pytest tests/test_parser.py tests/test_validate.py -v
 ```
 
 ## Fixture Inventory
@@ -33,82 +34,62 @@ python3 -m pytest tests/test_parser.py -v
 | `sample_multi_transaction.edi` | Multi-ST/SE in one GS/GE | 3 ST/SE | CLEAN |
 | `sample_multi_interchange.edi` | Multi-ISA/IEA (3 interchanges) | 3 ST/SE | CLEAN |
 | `sample_whitespace_irregular.edi` | Irregular CR/LF/spacing | 1 ST/SE | CLEAN |
+| `sample_trailing_whitespace.edi` | Trailing spaces and blank lines | 1 ST/SE | CLEAN |
+| `sample_missing_se.edi` | Wrong SE segment count (9 vs 10) | 1 ST/SE | `SE_COUNT_MISMATCH` |
+| `sample_missing_ge.edi` | Missing GE segment | 1 ST/SE | `GS_GE_MISMATCH` + `EMPTY_GROUP` |
+| `sample_missing_iea.edi` | Missing IEA segment | 1 ST/SE | `ISA_IEA_MISMATCH` + `SE_COUNT_MISMATCH` |
+| `sample_empty_transaction.edi` | ST immediately followed by SE | 1 ST/SE | `EMPTY_TRANSACTION` |
+| `sample_se_count_wrong.edi` | SE declares 20, actual 10 | 1 ST/SE | `SE_COUNT_MISMATCH` |
+| `sample_orphan_body_segment.edi` | Body segment (BPR) before first GS | 1 ST/SE | `SE_COUNT_MISMATCH` (count also wrong) |
 
-## Test Breakdown
+## Structural Validation Checks (validate.py)
 
-### `run_tests.py` — 67 tests
+| Check | Severity | Description |
+|-------|----------|-------------|
+| `ISA_IEA_MISMATCH` | error | ISA count != IEA count |
+| `GS_GE_MISMATCH` | error | GS count != GE count within an interchange |
+| `ST_SE_MISMATCH` | error | ST count != SE count within a functional group |
+| `EMPTY_TRANSACTION` | error | No body segments between ST and SE |
+| `EMPTY_GROUP` | warning | No ST/SE pairs between GS and GE |
+| `ORPHAN_ISA/IEA/GS/GE/ST/SE` | error | Segment appears outside its valid envelope |
+| `UNKNOWN_SEGMENT` | warning | Segment tag not in the known-inner-tag list |
+| `SE_COUNT_MISMATCH` | error | SE e1 segment count != actual segment count |
+| `SE_NO_COUNT` | warning | SE missing segment-count element |
+| `SE_INVALID_COUNT` | warning | SE e1 is not a parseable integer |
 
-**Tokenizer (3):** basic split, multiline, CRLF normalization — all pass.
+## pytest tests/test_validate.py — 26 tests
 
-**Segment Parser (5):** ST tag, ST element 1, ST element 2, out-of-range get, sub-element get — all pass.
+All pass, covering:
 
-**835 Fixture (11):** ISA header, ISA-06 sender, ISA-08 receiver, GS envelope, ST transaction, set_id `835`, IEA trailer, GE trailer, SE trailer, has loops, BPR segment — all pass.
+**`TestValidateCleanFixtures` (8 tests):** All 8 well-formed fixtures (including the new `sample_trailing_whitespace.edi`) pass with zero errors.
 
-**837 Professional Fixture (5):** set_id `837`, HL segments, BHT present, SV1 present, CLM present — all pass.
+**`TestValidateMissingEnvelopeSegments` (3 tests):**
+- `sample_missing_ge.edi` → `GS_GE_MISMATCH` detected
+- `sample_missing_iea.edi` → `ISA_IEA_MISMATCH` detected
+- `sample_missing_se.edi` → `SE_COUNT_MISMATCH` detected (SE present but wrong count)
 
-**837 Institutional Fixture (3):** set_id `837`, SV2 present, HI present — all pass.
+**`TestValidateEmptyTransaction` (1 test):** `sample_empty_transaction.edi` → `EMPTY_TRANSACTION` detected.
 
-**JSON Serialization (3):** 835, 837-prof, 837-inst JSON roundtrip — all pass.
+**`TestValidateSECountMismatch` (2 tests):** `sample_se_count_wrong.edi` → `SE_COUNT_MISMATCH` detected; error message includes ST control number.
 
-**Helper Functions (3):** parse_file, parse text, set_id check — all pass.
+**`TestValidateOrphanBodySegments` (1 test):** `sample_orphan_body_segment.edi` → at least one issue raised.
 
-**Rich 835 Fixture (9):** parses without crash, PLB segments, ≥3 LX loops, SE count present, multiple N1 PE, loop metadata complete, all kinds valid, descriptions non-empty, PLB kind=adjustment — all pass.
+**`TestValidationResultModel` (3 tests):** ValidationResult dataclass correctly tracks clean state, errors, and warnings.
 
-**Rich 837 Professional Fixture (5):** parses without crash, ≥2 HL levels, HI diagnosis, loop metadata complete, NM1 loops kind=entity — all pass.
+**`TestValidateExitCodes` (5 tests):** CLI exits 0 (clean), 1 (errors), 2 (not found).
 
-**Multi-Transaction Fixture (4):** 3 transactions, all set_id 835, SE counts distinct, each has loops — all pass.
-
-**Multi-Interchange Fixture (4):** 3 interchanges, IC1 is 835, IC3 is 837, IC3 sender/receiver extracted — all pass.
-
-**Whitespace-Irregular Fixture (4):** parses without crash, set_id 835, CLP loop present, NM1 QC loop present — all pass.
-
-**Loop Metadata — All Fixtures (1):** all loops in all fixtures have `leader_tag`, `leader_code`, `kind`, `description` fields — pass.
-
-**Resilience / Negative Cases (7):**
-- ISA without IEA — no crash ✓; interchanges returned (possibly partial) ✓
-- ST/SE pair — transaction parsed ✓
-- Bare ST/SE (no ISA wrapper) — no crash ✓; interchanges empty (documented limitation) ✓
-- SE before ST (out-of-order) — no crash ✓
-- Empty input — no crash ✓
-
-### `pytest tests/test_parser.py` — 52 tests
-
-All pass, including 13 new tests covering:
-- `TestLoopMetadata` (5 tests): all metadata fields present, kind values valid, PLB kind=adjustment, NM1 kind=entity, SVC loops kind=service
-- `Test835Rich` (6 tests): interchange header, set_id, PLB segments, multiple LX loops, PER segment, SE count present
-- `Test837ProfRich` (4 tests): interchange header, set_id, multiple HL levels, nested subscriber HL
-- `TestMultiTransaction` (4 tests): 3 transactions, set_id, distinct transaction IDs, loops per transaction
-- `TestMultiInterchange` (5 tests): 3 interchanges, IC1 835, IC2 835, IC3 837, sender/receiver extracted
-- `TestWhitespaceIrregular` (4 tests): parses, set_id 835, CLP loop, NM1 QC loop
+**`TestValidateJSONOutput` (3 tests):** JSON output is valid, clean fixtures produce `clean: true`, error fixtures produce `clean: false` with correct error codes.
 
 ## Bugs Fixed in This Pass
 
 | # | Bug | Fix |
 |---|-----|-----|
-| 1 | README claimed ISA-07 was receiver (qualifier, not ID) | Fixed README to note ISA-06= sender ID, ISA-08= receiver ID; renamed dataclass field `isa07_receiver` → `isa08_receiver`; updated tests |
-| 2 | Loop output had no meaningful metadata | Added `leader_tag`, `leader_code`, `kind`, `description` fields to Loop dataclass and `_loop_to_dict`; `_detect_loops` updated to populate them |
-| 3 | `validate.py` was a thin wrapper (no structural checks) | Rewrote as real validator with ISA/IEA, GS/GE, ST/SE pairing; orphan segment detection; empty group/transaction detection; SE segment-count validation; exit codes 0/1/2; human-readable and JSON output |
-| 4 | Missing HL in loop leader tags | Added `"HL"` to `LOOP_LEADER_TAGS` |
-| 5 | CLP missing from loop leader tags | Added `"CLP"` to `LOOP_LEADER_TAGS`; added `"CLP"` → `"claim"` in `_LOOP_KINDS` |
-| 6 | `kind` lookup used wrong key | Changed to try `current_loop_id` (loop code) first, then `current_leader_tag` (segment tag) |
-| 7 | Missing SE/GE/ISA in `VALID_INNER_TAGS` for orphan detection | Added missing segment tags |
-| 8 | Orphan ISA logic flagged valid multi-interchange files | Fixed logic to only flag ISA appearing while an interchange is still open (unclosed) |
-| 9 | Pre-existing fixture SE count mismatches | Fixed SE counts in all 6 fixtures with incorrect declared segment counts |
-
-## Structural Validation Checks (validate.py)
-
-| Check | Description |
-|-------|-------------|
-| `ISA_IEA_MISMATCH` | ISA count != IEA count |
-| `GS_GE_MISMATCH` | GS count != GE count within an interchange |
-| `ST_SE_MISMATCH` | ST count != SE count within a functional group |
-| `EMPTY_TRANSACTION` | No body segments between ST and SE |
-| `EMPTY_GROUP` (warning) | No ST/SE pairs between GS and GE |
-| `ORPHAN_ISA/IEA/GS/GE/ST/SE` | Segment appears outside its valid envelope |
-| `UNKNOWN_SEGMENT` (warning) | Segment tag not in the known-inner-tag list |
-| `SE_COUNT_MISMATCH` | SE e1 segment count != actual segment count |
-| `SE_NO_COUNT` (warning) | SE missing segment-count element |
-| `SE_INVALID_COUNT` (warning) | SE e1 is not a parseable integer |
+| 1 | `VALID_INNER_TAGS` had duplicate `"PLB"` and duplicate `"BPR"` entries | Deduplicated; added missing tags `LQ`, `F9`, `N2`, `G93` |
+| 2 | Dead code in orphan detection section (unused `envelope_positions` / `isa_positions` block) | Removed entire dead-code block |
+| 3 | SE count check could crash if trailer was missing | Added null-check guard before accessing trailer elements |
+| 4 | SE_COUNT_MISMATCH message didn't include ST control number | Added `st_control` (ST e2) to the error message |
+| 5 | `main()` duplicated JSON generation instead of calling `format_json()` | Refactored to use `format_json()` with `--compact` support via `separators` |
+| 6 | No test coverage for validate.py behavior | Added `tests/test_validate.py` with 26 tests covering clean fixtures, error fixtures, exit codes, and JSON output |
 
 ## Defects Still Open (Known Limitations)
 
