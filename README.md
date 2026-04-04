@@ -6,6 +6,7 @@
 python3 -m src.cli  sample.edi                  # → JSON
 python3 -m src.cli  sample.edi --summary        # → human-readable summary
 python3 -m src.validate sample.edi               # → structural report
+python3 -m src.validate sample.edi --rules examples/rules/premier-835-companion.sample.json
 ```
 
 X12 EDI is the dominant interchange format for US healthcare administrative data — claim payments, remittance advices, and professional/institutional claims all travel over X12. This library gives you a plain-Python, dependency-free way to pull that data into structured JSON.
@@ -133,6 +134,7 @@ Structural validation checks include:
 - **CLP status code validation** — warns on non-numeric or out-of-range (1–29) CLP status codes
 - **Issue categories** — every issue is tagged: `envelope`, `segment_structure`, `semantic`, `data_quality`, `content`
 - **Actionable recommendations** in JSON output (`--verbose` for text)
+- **Optional companion-guide / payer rule packs** via `--rules <pack.json>` for bounded trading-partner checks
 
 ```bash
 # Human-readable report
@@ -144,11 +146,28 @@ python3 -m src.validate tests/fixtures/sample_835.edi --verbose
 # JSON report with recommendations
 python3 -m src.validate tests/fixtures/sample_835.edi --json -o report.json
 
+# Apply an optional JSON payer-rule pack
+python3 -m src.validate tests/fixtures/sample_835_rich.edi \
+  --json \
+  --rules examples/rules/premier-835-companion.sample.json
+
 # Write report to file
 python3 -m src.validate tests/fixtures/sample_835.edi -o report.txt
 ```
 
 These checks are intentionally **bounded operational checks**, not full TR3/SNIP certification. They are meant to catch common structural and data-quality problems while keeping support-boundary claims honest.
+
+### Companion-guide / payer rules foundation
+
+A small config-driven foundation now exists for payer-specific rules:
+- JSON rule packs only (no extra dependencies)
+- pack matching by `transaction_set`, `version`, `payer_name_contains`, and/or `payer_id`
+- bounded rule types:
+  - segment presence: `required`, `recommended`, `forbidden`
+  - simple value assertions: `equals`, `starts_with`, `in`
+- issues flow through the normal validator output as standard warnings/errors
+
+This is intentionally not a full companion-guide interpreter. It is a thin framework for encoding a few high-value payer quirks honestly.
 
 **Exit codes:** `0` = clean, `1` = structural errors found, `2` = could not parse.
 
@@ -189,6 +208,10 @@ x12-parser/
 ├── demo/
 │   ├── run.sh            — demo script (4 commands, auto-summarised)
 │   └── *.txt / *.json    — pre-generated sample outputs
+├── examples/
+│   └── rules/
+│       ├── premier-835-companion.sample.json
+│       └── medicare-837i-companion.sample.json
 ├── DEMO.md               — demo walkthrough and sample output
 ├── run_tests.py          — manual test runner
 ├── ROADMAP.md            — gap analysis and planned improvements
@@ -209,6 +232,7 @@ X12 Parser is a **parser and structural checker**, not a full X12 validator:
 | Extract sender/receiver from ISA header | Validate X12 code values (e.g. "85" vs "86") |
 | Detect and group loops by segment leader | Produce official X12 loop IDs (output uses heuristic keys) |
 | Structural envelope validation + new semantic checks | Full TR3 schema compliance (element-level required/conditional rules) |
+| Optional small JSON payer-rule packs for companion-guide quirks | Full payer companion-guide coverage or automatic interpretation of proprietary PDFs |
 | Transaction summaries with financial totals + 837 hierarchy semantics | Cross-segment semantic reconciliation — billed/paid discrepancies flagged but not auto-corrected |
 | Preserve all segment elements as raw strings | Fully decompose composite elements into schema-aware sub-fields |
 | Non-numeric amount field warnings | Corrective auto-fixing of malformed numeric fields |

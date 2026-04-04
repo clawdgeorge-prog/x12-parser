@@ -25,6 +25,7 @@ from typing import Optional, List
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from src.parser import X12Parser
+from src.payer_rules import load_rule_pack, RulePackError, CompanionRuleEngine
 
 
 # ── Issue model ────────────────────────────────────────────────────────────────
@@ -623,6 +624,11 @@ _VALIDATION_RULES: dict[str, dict[str, dict]] = {
 
 # Issue category taxonomy — groups related issues for human-readable reporting
 _ISSUE_CATEGORIES: dict[str, str] = {
+    # Companion / payer rules
+    "PAYER_RULE_REQUIRED_SEGMENT_MISSING": "semantic",
+    "PAYER_RULE_RECOMMENDED_SEGMENT_MISSING": "semantic",
+    "PAYER_RULE_FORBIDDEN_SEGMENT_PRESENT": "semantic",
+    "PAYER_RULE_VALUE_MISMATCH": "data_quality",
     # Envelope
     "ISA_IEA_MISMATCH":      "envelope",
     "GS_GE_MISMATCH":        "envelope",
@@ -703,6 +709,10 @@ def format_report(result: ValidationResult, verbose: bool = False) -> str:
 
 # Recommendation catalog — maps issue codes to actionable guidance
 _ISSUE_RECOMMENDATIONS = {
+    "PAYER_RULE_REQUIRED_SEGMENT_MISSING": "A matched companion-guide rule expected this segment. Review the payer/trading-partner implementation guide and add the missing segment if the rule pack is correct.",
+    "PAYER_RULE_RECOMMENDED_SEGMENT_MISSING": "A matched companion-guide rule recommends this segment. Review the payer rule pack and companion guide to decide whether this should be informational only or supplied upstream.",
+    "PAYER_RULE_FORBIDDEN_SEGMENT_PRESENT": "A matched companion-guide rule marked this segment as forbidden. Verify the trading-partner guide and remove or remap the segment if needed.",
+    "PAYER_RULE_VALUE_MISMATCH": "A matched companion-guide rule expected a different element value. Compare the raw segment against the payer-specific implementation guide and update the file or the rule pack.",
     "ISA_IEA_MISMATCH": "Each interchange must have exactly one ISA and one IEA trailer. "
         "Verify the file was not truncated or corrupted during transfer.",
     "GS_GE_MISMATCH": "Each functional group must have matching GS and GE counts. "
@@ -801,6 +811,7 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--compact", action="store_true", help="Compact JSON (no indent)")
     parser.add_argument("--verbose", action="store_true", help="Show warnings in text report")
+    parser.add_argument("--rules", type=pathlib.Path, help="Optional JSON companion-guide / payer rule pack")
 
     args = parser.parse_args()
 
@@ -818,6 +829,19 @@ def main() -> None:
 
     validator = X12Validator(x12)
     result = validator.validate()
+
+    if args.rules:
+        try:
+            pack = load_rule_pack(args.rules)
+        except (OSError, json.JSONDecodeError, RulePackError) as exc:
+            print(f"ERROR: could not load rule pack {args.rules}: {exc}", file=sys.stderr)
+            sys.exit(2)
+        companion = CompanionRuleEngine(x12).apply_pack(pack)
+        for issue in companion.issues:
+            if issue.severity == "error":
+                result.add_error(issue.code, issue.message, issue.segment_tag, issue.segment_position)
+            else:
+                result.add_warning(issue.code, issue.message, issue.segment_tag, issue.segment_position)
 
     if args.json:
         text = format_json(result)

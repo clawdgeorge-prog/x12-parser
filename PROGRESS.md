@@ -1,43 +1,5 @@
 # X12 Parser — Progress Log
 
-## Session: Dynamic ISA delimiter extraction (2026-04-04 — 16:00 MDT)
-
-### What Changed
-
-**A. Robust dynamic delimiter extraction:**
-- `_detect_delimiters()` now extracts element separator (ISA-3), component separator (ISA-16), and repetition separator (ISA-11) from the actual ISA segment
-- Parser uses detected delimiters for both tokenization and segment parsing
-- Falls back to defaults (*, :, ^, ~) if ISA not found
-
-**B. Added fixture for non-standard delimiters:**
-- Created `sample_835_alt_delimiters.edi` with +> delimiters (instead of standard *:~)
-- Tests verify parsing works correctly with both standard and alternative delimiters
-
-**C. Tests:**
-- Added `TestDelimiterDetection` class with 5 tests:
-  - `test_standard_delimiters_detected` — verifies *:^~ detection
-  - `test_alternative_delimiters_detected` — verifies +> detection
-  - `test_no_isa_returns_defaults` — verifies fallback behavior
-  - `test_alt_delimiter_file_parses_correctly` — integration test
-  - `test_standard_delimiter_file_still_works` — regression test
-
-**D. Documentation:**
-- Updated parser docstring scope to v0.2.1
-- Updated known limitations: repetition separator now extracted (not used yet)
-
-### Test Results
-
-- pytest: 91 parser tests + 50 validate tests = **141 passed** (was 140, added 5 new)
-- 2 pre-existing payer-rules test failures remain (unrelated to delimiter work)
-
-### What Remains Limited
-
-1. **Repetition separator (ISA-11)** — extracted but not used for segment parsing. The X12 spec allows repeating elements within segments (using ISA-11 as separator). This is not implemented yet.
-2. **Escaped delimiters** — No handling of escaped delimiter characters in data fields
-3. **Segment terminator detection** — currently assumes ~ or newline; could be extracted more robustly
-
----
-
 ## Session: Companion-guide / payer rules foundation (2026-04-04 — 15:55 MDT)
 
 ### What Changed
