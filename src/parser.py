@@ -363,6 +363,11 @@ _LOOP_KINDS = {
     "CR3": "oxygen",
     "CR4": "durable_medical",
     "CR5": "vision",
+    # Known-optional 835 segments — recognized as loop leaders, not deeply semanticized
+    "TS2": "statistics",
+    "TS3": "statistics",
+    "MIA": "statistics",
+    "MOA": "statistics",
 }
 
 # Look-up description tables (leader_code → short description)
@@ -381,6 +386,11 @@ _LOOP_DESCRIPTIONS_835 = {
     "PE": "Provider Name",
     "QC": "Patient/Claimant Name",
     "NM1": "Entity Name",
+    # Known-optional 835 segments (recognized but not deeply semanticized)
+    "TS2": "Transaction Statistics (Provider)",
+    "TS3": "Transaction Statistics (Insured)",
+    "MIA": "Medicare Inpatient Adjudication",
+    "MOA": "Medicare Outpatient Adjudication",
 }
 
 _LOOP_DESCRIPTIONS_837 = {
@@ -424,10 +434,15 @@ _LOOP_DESCRIPTIONS_837 = {
 
 def _infer_loop_description(leader_tag: str, leader_code: str) -> str:
     """Look up a human-readable description for a loop from known tables."""
+    # First check by leader_code (first element of leader segment)
     desc = _LOOP_DESCRIPTIONS_835.get(leader_code) or _LOOP_DESCRIPTIONS_837.get(leader_code)
     if desc:
         return desc
-    # Fallback: tag-based generic label
+    # Fallback: check by leader_tag (segment tag) for segments like TS2/TS3/MIA/MOA
+    desc = _LOOP_DESCRIPTIONS_835.get(leader_tag) or _LOOP_DESCRIPTIONS_837.get(leader_tag)
+    if desc:
+        return desc
+    # Final fallback: tag-based generic label
     return f"{leader_tag} Loop"
 
 
@@ -445,12 +460,15 @@ def _detect_loops(segments: List[Segment]) -> List[Loop]:
       - segments     : all segments in this loop
     """
     # Tags that trigger a new loop grouping
+    # TS2/TS3/MIA are 835-specific optional segments — recognized as loop leaders
+    # in 835 context but not deeply semanticized
     LOOP_LEADER_TAGS = frozenset((
         "NM1", "CLM", "N1", "LX", "SV1", "SV2", "SV3", "HI", "BPR",
         "CLP", "PLB",
         "ADJ", "CAS", "REF", "DTM", "PER", "AMT", "QTY", "CTP",
         "HCP", "TRN", "CUR", "DMG", "PAT", "NTE", "LIN", "CR1",
         "CR2", "CR3", "CR4", "CR5", "RDM", "BHT", "HL",
+        "TS2", "TS3", "MIA", "MOA",
     ))
 
     loops: List[Loop] = []

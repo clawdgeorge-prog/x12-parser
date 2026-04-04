@@ -173,13 +173,14 @@ class X12Validator:
 
         # Well-known inner-segment tags for orphan detection.
         # Covers 835/837 body segments; unknown tags generate a warning.
+        # TS2/TS3 = 835 transaction statistics (optional, recognized but not deeply semanticized)
         VALID_INNER_TAGS = frozenset((
             "BPR", "TRN", "DTM", "N1", "N3", "N4", "REF", "LX", "CLP", "CAS",
             "NM1", "SVC", "ADJ", "DTP", "BHT", "HL", "PER", "SBR", "HI",
             "SV1", "SV2", "SV3", "SV4", "SV5", "DMG", "AMT", "QTY", "CTP",
             "HCP", "CUR", "NTE", "PAT", "LIN", "CR1", "CR2", "CR3", "CR4",
             "CR5", "RDM", "PLB", "RMR", "ENT", "NME", "NX1", "K1",
-            "CLM", "BPR", "LQ", "F9", "N2", "G93",
+            "CLM", "BPR", "LQ", "F9", "N2", "G93", "TS2", "TS3", "MIA", "MOA",
         ))
 
         # Identify orphan ISA/IEA/GS/GE segments that appear outside interchanges

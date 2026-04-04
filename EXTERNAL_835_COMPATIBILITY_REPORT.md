@@ -79,11 +79,12 @@ Fix applied:
 - summary rendering is now type-aware and uses safer field access per discrepancy type
 - result: external summary mode no longer crashes on this sample
 
-### TS3 / MOA handling decision
+### TS3 / MOA / MIA / TS2 handling decision
 Decision:
-- classify `TS3` and `MOA` as tolerated / known-optional segments
+- classify `TS3`, `MOA`, `MIA`, and `TS2` as tolerated / known-optional segments
 - preserve them in parse output / loop structure
-- do **not** claim deep semantic support yet
+- add descriptive loop names for these segments in 835 context
+- do **not** claim deep semantic support yet (no dedicated field extraction)
 
 This keeps behavior useful without overstating support.
 
