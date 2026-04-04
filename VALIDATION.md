@@ -1,17 +1,16 @@
 # X12 Parser — Validation Report
 
-**Date:** 2026-04-03 13:54 MDT
-**Version:** 0.2.0 (837 hierarchy + 835 reconciliation pass)
-**Run by:** Subagent (837 hierarchy & 835 reconciliation pass)
+**Date:** 2026-04-04 12:18 MDT
+**Version:** 0.2.0 (docs/QA alignment pass)
+**Run by:** George
 
 ## Test Suites
 
 | Suite | Tests | Passed | Failed |
 |-------|-------|--------|--------|
 | `run_tests.py` | 67 | 67 | 0 |
-| `pytest tests/test_parser.py` | 77 | 77 | 0 |
-| `pytest tests/test_validate.py` | 36 | 36 | 0 |
-| **Total** | **180** | **180** | **0** |
+| `pytest -q` | 136 | 136 | 0 |
+| **Total** | **203** | **203** | **0** |
 
 ## Command Used
 
@@ -19,7 +18,7 @@
 cd /Users/georgeclawd/.openclaw/agents/coder/x12-parser
 find . -name __pycache__ -exec rm -rf {} +
 python3 run_tests.py
-python3 -m pytest tests/test_parser.py tests/test_validate.py -v
+python3 -m pytest -q
 ```
 
 ## Fixture Inventory
@@ -42,7 +41,7 @@ python3 -m pytest tests/test_parser.py tests/test_validate.py -v
 | `sample_se_count_wrong.edi` | SE declares 20, actual 10 | 1 ST/SE | `SE_COUNT_MISMATCH` |
 | `sample_orphan_body_segment.edi` | Body segment (BPR) before first GS | 1 ST/SE | `SE_COUNT_MISMATCH` (count also wrong) |
 
-All clean fixtures produce **zero warnings** from the new validation checks (numeric amounts, duplicate claim IDs, ISA date/time format, required segments).
+All clean fixtures produce **zero errors** from the structural validator. The validation layer is intentionally bounded: it is designed to surface common structural and data-quality issues without implying full TR3/SNIP certification.
 
 ## Structural Validation Checks (validate.py)
 
@@ -64,45 +63,15 @@ All clean fixtures produce **zero warnings** from the new validation checks (num
 | `NON_NUMERIC_AMOUNT` | warning | CLP/SVC/CAS monetary element is non-numeric |
 | `CLAIM_ID_DUPLICATE` | warning | CLP (835) or CLM (837) ID appears more than once in a transaction |
 
-## pytest tests/test_validate.py — 46 tests (was 26)
+## Automated test coverage snapshot
 
-All pass, covering all new checks plus the original suite:
+Current local test run status:
 
-**`TestValidateCleanFixtures` (8 tests):** All 8 well-formed fixtures pass with zero errors.
+- `run_tests.py`: **67 passed**
+- `pytest -q`: **136 passed**
+- **Total automated checks:** **203 passed**
 
-**`TestValidateMissingEnvelopeSegments` (3 tests):** Missing GE, IEA, wrong SE count.
-
-**`TestValidateEmptyTransaction` (1 test):** Empty transaction detection.
-
-**`TestValidateSECountMismatch` (2 tests):** SE count mismatch detection + ST control number in message.
-
-**`TestValidateOrphanBodySegments` (1 test):** Orphan segment detection.
-
-**`TestValidationResultModel` (3 tests):** ValidationResult dataclass model.
-
-**`TestValidateExitCodes` (5 tests):** CLI exit codes (0/1/2).
-
-**`TestValidateJSONOutput` (3 tests):** JSON validity, clean/error states.
-
-**`TestValidateRequiredSegments` (2 tests):** 835 missing BPR → REQUIRED_SEGMENT_MISSING; 837 missing CLM → REQUIRED_SEGMENT_MISSING.
-
-**`TestValidateNumericAmounts` (2 tests):** CLP non-numeric billed → NON_NUMERIC_AMOUNT; SVC non-numeric billed → NON_NUMERIC_AMOUNT.
-
-**`TestValidateDuplicateClaims` (2 tests):** 835 duplicate CLP ID → CLAIM_ID_DUPLICATE; 837 duplicate CLM ID → CLAIM_ID_DUPLICATE.
-
-**`TestValidateISAFormat` (2 tests):** ISA invalid date → ISA_DATE_INVALID; ISA invalid time → ISA_TIME_INVALID.
-
-**`TestValidateRecommendations` (2 tests):** JSON output includes `recommendation` field; `--verbose` text report shows `→` recommendations.
-
-## pytest tests/test_parser.py — 52 tests (unchanged count, new tests added)
-
-**`Test835Summary` (4 tests):** Transaction summary present, amounts numeric, payer/provider identified, no duplicate claims in basic fixture.
-
-**`Test837Summary` (3 tests):** Transaction summary present, parties identified, BHT date format valid.
-
-**`TestRich835Summary` (3 tests):** PLB count reflected, multiple claims, BPR payment amount = 3500.0.
-
-*(9 new tests added to the existing 52-test suite)*
+The pytest suite covers parser behavior, validation behavior, summary generation, discrepancy detection, hierarchy rollups, duplicate claim handling, issue categorization, and bounded 837 dental detection.
 
 ## Bugs Fixed in This Pass
 
@@ -123,9 +92,10 @@ All pass, covering all new checks plus the original suite:
 ## Defects Still Open (Known Limitations)
 
 - No X12 schema validation (segment order, required elements, code values)
-- No cross-segment semantic validation (CLP vs SVC amount reconciliation)
+- No full TR3/SNIP certification or enterprise-grade conformance claims
 - Loop IDs are heuristic — may not match official X12 loop nomenclature
 - Non-standard delimiters (other than `*`:`:`:`~`) may cause incorrect parsing
 - Composite elements returned as raw strings (e.g., `"12:345"`) — not decomposed
-- `validate.py` performs envelope/structural/semantic validation — not a full X12 schema validator
+- `validate.py` performs bounded envelope/structural/semantic checks — not a full X12 schema validator
+- 837 Dental support remains scaffolded/bounded; detection and light handling exist, but dental-specific semantics are not yet deeply modeled
 - ISA date/time warnings are format-only; do not validate CCYYMMDD/HHMM semantics

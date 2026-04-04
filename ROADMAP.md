@@ -106,7 +106,7 @@ Currently ISA-11 is treated as a space. If present and non-standard, the parser 
 **Recommendation:** Implement when a fixture requiring it is available.
 
 ### CLI — additional output modes
-- `--summary` flag to print only the transaction summary (human-readable)
+- [x] `--summary` flag to print only the transaction summary (human-readable)
 - `--extract claims` to print structured claim records
 - `--check-duplicates` to flag duplicate claim IDs
 
@@ -115,7 +115,7 @@ Currently ISA-11 is treated as a space. If present and non-standard, the parser 
 ## Recommended Phased Roadmap
 
 ### v0.2 — Semantic Hardening (current focus)
-**Goal:** Make parsed 835/837 data immediately useful for business logic.
+**Goal:** Make parsed 835/837 data immediately useful for business logic while keeping support-boundary claims conservative.
 
 1. [x] Transaction summaries (financial totals, claim counts, party names)
 2. [x] Non-numeric amount warnings
@@ -127,6 +127,7 @@ Currently ISA-11 is treated as a space. If present and non-standard, the parser 
 8. [x] **835 claim-level rollups** (billed/paid/adjustment per CLP, SVC aggregation, discrepancy flags, PLB summary)
 9. [ ] SVC composite decomposition in JSON output
 10. [ ] `extract_claims()` helper returning structured claim records with adjustments
+11. [ ] Bounded dental-specific semantics beyond variant detection (only after fixtures/tests justify the claim)
 
 ### v0.3 — Rule-based Validation
 **Goal:** Catch more data quality issues without full TR3 parsing.

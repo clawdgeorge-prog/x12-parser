@@ -1,100 +1,126 @@
 # FEEDBACK_QA.md — George QA Memo
 
 ## QA Checkpoint
-Date: 2026-04-03 06:24 MDT
-Status: still a validated limited-scope extractor; still not meaningfully closer to professional-grade
+Date: 2026-04-04 00:15 MDT
+Status: stronger and increasingly product-like; next pass should focus on boundary clarity, summary polish, and practical validation depth
 
 ## Overall judgment
-The parser still looks stable for its current narrow baseline, and the existing validation evidence remains credible. There is no obvious regression.
+The implementation quality has improved materially over the earlier baseline. The parser/validator now feels like a serious internal tool rather than just a parsing experiment because:
+- validation is more structured
+- issue categorization is more useful
+- 835/837 helper semantics are richer
+- docs and roadmap are evolving with the code
+- the CLI summary path is beginning to look like a real operator surface
 
-But there is also no sign of meaningful advancement past the prior QA checkpoints. The same issues remain unresolved: stale README details, a non-differentiated `validate.py`, heuristic loop output without better metadata, and narrow fixture coverage. The next implementation pass should be judged on whether it closes these exact items, not on whether it adds more general cleanup.
+This is good progress.
+
+The next risk is not lack of features. The next risk is *support-boundary confusion* and *premature overclaiming*. The repo is now good enough that every new feature needs tighter discipline around exactly what is authoritative, what is heuristic, and what is merely scaffolded.
 
 ## What is now strong
-- Credible executed test evidence still exists.
-- Included 835 and 837 fixtures appear stable.
-- Parser is usable for controlled prototyping and JSON extraction.
-- Current validation/progress artifacts are more trustworthy than the README.
-- No visible regression in current code or interface.
+- Validation rule organization is more coherent than earlier ad hoc logic.
+- Issue categories/recommendations increase operational usefulness.
+- 837 hierarchy output is meaningfully more interpretable than before.
+- 835 reconciliation helpers remain useful and bounded.
+- `--summary` is a legitimate product-surface improvement.
+- Test coverage remains credible and broad for an internal v0.2 tool.
+- Docs/roadmap are increasingly aligned with the real implementation.
 
 ## What still looks weak or risky
 
-### 1) README remains stale and inconsistent
-Still says:
-- ISA sender/receiver are ISA06 and ISA07
-- malformed-input resilience tests do not exist
+### 1) 837 Dental still needs a harder boundary
+The current state appears to be:
+- variant detection exists
+- dental fixture parsing exists
+- dental support is still scaffolded only
+- UD/service-line semantics remain incomplete
 
-Both statements conflict with current code/progress/validation artifacts.
+That is acceptable *only if the repo remains extremely careful about the wording*. Right now, this is still the largest risk of accidental overclaiming.
 
-### 2) `validate.py` still does not function as a validator
-It remains a duplicate parse wrapper instead of a structural validation/reporting tool.
+### 2) `--summary` now matters enough that design quality matters
+It is no longer a side utility. It is becoming a real operator/demo surface.
 
-### 3) Loop output is still too thin
-Heuristic grouping remains acceptable for v0.1.0, but the output still lacks enough metadata to be comfortably useful downstream.
+That means the next pass should intentionally improve:
+- section order
+- density vs readability
+- discrepancy presentation
+- hierarchy readability
+- stable labels and money formatting
+- avoiding pseudo-authoritative language
 
-### 4) Fixture breadth still limits confidence
-Current tests are real, but the fixture set is still too narrow for stronger robustness claims.
+### 3) Transaction-specific validation can still go deeper in bounded ways
+There is room for more useful validation, but it should stay practical:
+- subtype-specific required-entity checks
+- bounded semantic consistency checks
+- duplicate-control and duplicate-claim handling improvements
+- malformed nesting and structural warning quality
 
-### 5) Delimiter handling remains fragile
-Still effectively assumes standard delimiters.
+Do not try to leap straight to pseudo-SNIP completeness.
+
+### 4) Test-surface drift is still a maintenance risk
+The more fixtures and validation modes we add, the more important it is that pytest, `run_tests.py`, docs, and demo all reflect the same supported surface. Keep them synchronized.
+
+### 5) Summary/helper outputs need wording discipline
+Helper summaries and reconciliation helpers are valuable, but a downstream reader could overinterpret them as authoritative accounting or canonical semantic truth. Docs and CLI labels should continue to frame them as *helper interpretations*.
 
 ## Exact next implementation priorities
 
-### Priority 1 — fix README immediately
-Bring README into alignment with actual code and validation artifacts:
-- correct sender/receiver wording
-- remove stale malformed-input testing claim
-- ensure limitation/support language matches current state
+### Priority 1 — resolve the 837 Dental ambiguity decisively
+Pick one clear path:
+1. keep it explicitly scaffolded and tighten docs/demo/summary wording accordingly, or
+2. deepen it a little in a real/test-backed way (e.g. count UD service lines properly, add a clearer dental summary path, add a few dental-specific validation checks)
 
-### Priority 2 — implement real structural validation in `validate.py`
-Required checks:
-- ISA/IEA pairing
-- GS/GE pairing
-- ST/SE pairing
-- orphan segments
-- empty groups/transactions
-- malformed nesting indicators
+Do not leave it in a fuzzy in-between state.
 
-Required outputs:
-- human-readable report
-- nonzero exit code on failures
-- optional JSON report
+### Priority 2 — polish `--summary` into a cleaner operator/demo surface
+Make it feel intentional:
+- stable section ordering
+- concise discrepancy summaries
+- readable hierarchy blocks
+- good labels and count formatting
+- money formatting that is consistent and easy to skim
 
-### Priority 3 — enrich loop metadata
-Add output fields like:
-- `leader_tag`
-- `leader_code`
-- `kind`
-- optional human-readable `description`
+This is one of the highest-ROI professionalism upgrades available right now.
 
-### Priority 4 — broaden fixtures/tests
-Add at least:
-- multi-transaction fixture
-- multi-interchange fixture
-- whitespace/newline-irregular fixture
-- richer 835 fixture
-- richer 837 fixture
+### Priority 3 — add another bounded wave of transaction-specific validation
+Good next candidates:
+- more subtype-specific required checks
+- better duplicate claim/control handling
+- slightly deeper malformed nesting warnings
+- a few more claim/service coherence checks where low-risk
 
-### Priority 5 — rerun and refresh validation
-After the above changes, rerun tests and update `VALIDATION.md` so the next QA pass evaluates a genuinely expanded baseline.
+### Priority 4 — keep docs and demo perfectly aligned with support boundaries
+Specifically verify:
+- README
+- DEMO.md
+- ROADMAP.md
+- any CLI examples
+
+Make sure 837 Professional / Institutional / Dental support language is exact and not inflated.
+
+### Priority 5 — keep test surfaces in sync
+Ensure new fixtures, validator behavior, and summary behavior are reflected coherently across:
+- pytest
+- `run_tests.py`
+- validation docs
+- demo expectations
 
 ## Risk flags
-- Do not keep shipping stale README claims.
-- Do not keep `validate.py` as a second parser wrapper.
-- Do not imply stronger loop semantics than the output supports.
-- Do not overstate field robustness from the current fixture set.
+- Do not imply full 837D support yet.
+- Do not let helper summaries sound like authoritative accounting or TR3-certified semantics.
+- Do not let validation rule tables become decorative architecture.
+- Do not let fixtures/tests/docs drift out of sync.
 
 ## Definition of done for next pass
-The next pass should complete all of these:
+The next pass should ideally complete most of these:
 
-- [ ] README aligned with code and validation artifacts
-- [ ] `validate.py` upgraded into a true structural validator
-- [ ] parse vs validate roles clearly differentiated
-- [ ] loop output enriched with more useful metadata
-- [ ] broader fixture set added
-- [ ] tests expanded to cover new fixtures/cases
-- [ ] `VALIDATION.md` refreshed with new run results
+- [ ] dental support boundary is tightened or modestly deepened in a real/test-backed way
+- [ ] `--summary` is polished into a cleaner and more deliberate operator/demo surface
+- [ ] docs/demo fully align with actual support boundaries
+- [ ] pytest and `run_tests.py` remain aligned as fixtures grow
+- [ ] another bounded wave of useful transaction-specific validation lands cleanly
+- [ ] helper semantics remain honestly framed in docs and outputs
 
 ## Recommended positioning right now
 Current best description:
 
-> A validated v0.1.0 Python parser/extractor for common healthcare EDI 835 and 837 files, useful for prototyping and controlled downstream transformation, but still heuristic in loop semantics and not yet a professional-grade parse/validate application.
+> A validated internal X12 parser/validator for common healthcare 835 and 837 transactions, with structured JSON output, growing helper semantics, a more product-like validation layer, and strong fixture-based tests. It is becoming a serious operational tool, but still has bounded/heuristic semantics and should not yet be marketed as a full TR3- or SNIP-complete enterprise platform.

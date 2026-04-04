@@ -50,10 +50,10 @@ print(p.to_json())
 
 | ID  | Name | Status |
 |-----|------|--------|
-| **835** | Healthcare Claim Payment/Advice | ✅ Parsed |
-| **837 P** | Healthcare Claim — Professional (CMS-1500) | ✅ Parsed |
-| **837 I** | Healthcare Claim — Institutional (UB-04) | ✅ Parsed |
-| **837 D** | Healthcare Claim — Dental | ⚙️ Scaffolded (basic parse) |
+| **835** | Healthcare Claim Payment/Advice | ✅ Parsed + summarized + structurally validated |
+| **837 P** | Healthcare Claim — Professional (CMS-1500) | ✅ Parsed + summarized + structurally validated |
+| **837 I** | Healthcare Claim — Institutional (UB-04) | ✅ Parsed + summarized + structurally validated |
+| **837 D** | Healthcare Claim — Dental | ⚙️ Scaffolded parse + variant detection only |
 
 ### Envelope structure
 
@@ -148,6 +148,8 @@ python3 -m src.validate tests/fixtures/sample_835.edi --json -o report.json
 python3 -m src.validate tests/fixtures/sample_835.edi -o report.txt
 ```
 
+These checks are intentionally **bounded operational checks**, not full TR3/SNIP certification. They are meant to catch common structural and data-quality problems while keeping support-boundary claims honest.
+
 **Exit codes:** `0` = clean, `1` = structural errors found, `2` = could not parse.
 
 ---
@@ -211,7 +213,7 @@ X12 Parser is a **parser and structural checker**, not a full X12 validator:
 | Preserve all segment elements as raw strings | Fully decompose composite elements into schema-aware sub-fields |
 | Non-numeric amount field warnings | Corrective auto-fixing of malformed numeric fields |
 
-**Transaction types:** Only 835, 837 Professional, and 837 Institutional are supported. 277, 278, 834, and others are not yet implemented.
+**Transaction types:** 835, 837 Professional, and 837 Institutional are the primary supported transaction types. 837 Dental currently has bounded support: it parses, is identified as dental, and participates in summary/validation flows, but dental-specific semantics are not yet modeled deeply enough to claim full support. 277, 278, 834, and others are not yet implemented.
 
 **Large files** have not been stress-tested.
 

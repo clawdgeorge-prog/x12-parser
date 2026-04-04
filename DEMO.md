@@ -8,6 +8,8 @@
 4. **Validate** a clean fixture → clean pass
 5. **Summarize** an 835 or 837 file → human-readable summary (money amounts, claim counts, discrepancies)
 
+> Note: 837 Dental is included only as a bounded scaffold/demo case. Variant detection works, but dental-specific semantics are not yet deep enough to treat it as full production-grade support.
+
 ---
 
 ## Run the demo
