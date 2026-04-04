@@ -99,12 +99,39 @@ def _format_summary(data: dict) -> str:
                     if summary.get("discrepancies"):
                         lines.append(f"\n    ⚠ Financial discrepancies ({len(summary['discrepancies'])}):")
                         for disc in summary["discrepancies"]:
-                            lines.append(
-                                f"      [{disc['type']}] claim {disc['claim_id']}: "
-                                f"CLP billed {_fmt_money(disc['clp_billed'])} "
-                                f"vs SVC sum {_fmt_money(disc['sum_svc_billed'])} "
-                                f"(diff {_fmt_money(disc['difference'])})"
-                            )
+                            disc_type = disc.get("type", "")
+                            if disc_type == "billed_mismatch":
+                                lines.append(
+                                    f"      [{disc_type}] claim {disc['claim_id']}: "
+                                    f"CLP billed {_fmt_money(disc.get('clp_billed', 0))} "
+                                    f"vs SVC sum {_fmt_money(disc.get('sum_svc_billed', 0))} "
+                                    f"(diff {_fmt_money(disc.get('difference', 0))})"
+                                )
+                            elif disc_type == "paid_mismatch":
+                                lines.append(
+                                    f"      [{disc_type}] claim {disc['claim_id']}: "
+                                    f"CLP paid {_fmt_money(disc.get('clp_paid', 0))} "
+                                    f"vs SVC sum {_fmt_money(disc.get('sum_svc_paid', 0))} "
+                                    f"(diff {_fmt_money(disc.get('difference', 0))})"
+                                )
+                            elif disc_type == "zero_pay_inconsistency":
+                                lines.append(
+                                    f"      [{disc_type}] claim {disc['claim_id']}: "
+                                    f"status={disc.get('status_code', '?')} "
+                                    f"but SVC paid {_fmt_money(disc.get('svc_paid', 0))}"
+                                )
+                            elif disc_type == "cas_adjustment_mismatch":
+                                lines.append(
+                                    f"      [{disc_type}] claim {disc['claim_id']}: "
+                                    f"CAS sum {_fmt_money(disc.get('cas_sum', 0))} "
+                                    f"vs CLP adj {_fmt_money(disc.get('clp_adjustment', 0))}"
+                                )
+                            else:
+                                # Fallback for any new types
+                                lines.append(
+                                    f"      [{disc_type}] claim {disc.get('claim_id', '?')}: "
+                                    f"{disc.get('description', '')}"
+                                )
                     if summary.get("plb_count", 0) > 0:
                         lines.append(f"\n    PLB adjustments ({summary['plb_count']}):")
                         ps = summary.get("plb_summary", {})

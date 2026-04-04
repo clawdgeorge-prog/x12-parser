@@ -268,6 +268,8 @@ X12 Parser is a **parser and structural checker**, not a full X12 validator:
 
 **Transaction types:** 835, 837 Professional, and 837 Institutional are the primary supported transaction types. 837 Dental currently has bounded support: it parses, is identified as dental, and participates in summary/validation flows, but dental-specific semantics are not yet modeled deeply enough to claim full support. 277, 278, 834, and others are not yet implemented.
 
+**External/public 835 samples:** The parser has been tested against public 835 examples (e.g., HDI Healthcare sample with TS3, MOA segments). Segments like TS3 and MOA are tolerated and preserved in the loop structure but are not yet fully semanticized — they are treated as known-optional segments rather than claiming complete field-level support.
+
 **Large files** have not been stress-tested.
 
 ---

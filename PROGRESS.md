@@ -1,5 +1,43 @@
 # X12 Parser — Progress Log
 
+## Session: External 835 Hardening Wave (2026-04-04 — 16:27 MDT)
+
+### What Changed
+
+**A. Fixed summary-mode crash on external 835 samples**
+- The CLI's `_format_summary()` function was accessing `disc['clp_billed']` directly, but discrepancy objects have varying keys depending on type
+- Added type-aware handling for `billed_mismatch`, `paid_mismatch`, `zero_pay_inconsistency`, and `cas_adjustment_mismatch` discrepancy types
+- Now uses `.get()` with appropriate fallback keys per type
+
+**B. Added external 835 test coverage**
+- Created `tests/test_external_835.py` with tests for:
+  - HDI 835 sample: parsing completes without error, summary computation works, TS3/MOA tolerated
+  - Jobisez sample: bare transaction set (no envelope) handled gracefully
+- External test files are in `external-test-files/` directory
+
+**C. Documented TS3 and MOA segment handling**
+- TS3 (Transaction Statistics) and MOA (Outpatient Adjudication) segments are now documented as "known-optional" — they are parsed and preserved in loop structure but not fully semanticized
+- README.md updated with note about external/public 835 sample compatibility
+
+**D. Verified test suite**
+- All 190 tests pass (previous 186 + 4 new external 835 tests)
+
+### What Remains Limited
+
+1. **TS3/MOA semantic support**: These segments are tolerated but not semanticized (no dedicated field extraction)
+2. **Bare transaction sets**: Files without ISA/GS envelope return empty interchanges (expected behavior, not an error)
+3. **No additional public samples found**: Could not locate freely-redistributable 835 samples beyond the HDI and Jobisez fixtures
+
+### Ready for Local Commit
+
+- ✅ Summary crash fixed and tested
+- ✅ External 835 tests added and passing
+- ✅ Documentation updated with support-boundary honesty
+- ✅ All 190 tests pass
+- ⚠️ TS3 and MOA are "tolerated" not fully supported — documented in README
+
+---
+
 ## Session: Workstream 3 — Additional Output Modes (2026-04-04 — 15:50 MDT)
 
 ### What Changed
