@@ -268,9 +268,13 @@ X12 Parser is a **parser and structural checker**, not a full X12 validator:
 
 **Transaction types:** 835, 837 Professional, and 837 Institutional are the primary supported transaction types. 837 Dental currently has bounded support: it parses, is identified as dental, and participates in summary/validation flows, but dental-specific semantics are not yet modeled deeply enough to claim full support. 277, 278, 834, and others are not yet implemented.
 
-**External/public 835 samples:** The parser has been tested against public 835 examples (e.g., HDI Healthcare sample with TS3, MOA segments). Segments like TS3 and MOA are tolerated and preserved in the loop structure but are not yet fully semanticized — they are treated as known-optional segments rather than claiming complete field-level support.
+**External/public 835 samples:** The parser has been tested against public 835 examples (e.g., HDI Healthcare sample with TS2, TS3, MIA, MOA style optional segments and the Jobisez bare-ST example). Segments like TS2/TS3/MIA/MOA are now tolerated and preserved in the loop structure but are not yet fully semanticized — they are treated as known-optional segments rather than claiming complete field-level support.
 
-**Large files** have not been stress-tested.
+**External/public 837 samples:** The parser has also been tested against public HDI 837P and 837I examples. Bounded recognition now covers support segments such as PRV, CL1, PWK, OI, and SVD so they do not create misleading unknown-segment noise in otherwise valid external files. This is still bounded support, not full field-level semantic coverage.
+
+See `EXTERNAL_835_COMPATIBILITY_REPORT.md` for the current external-sample matrix and support posture.
+
+**Large files** have not been stress-tested beyond the synthetic 835 benchmark/fixture work documented in the repo.
 
 ---
 

@@ -15,6 +15,26 @@
 
 ## Run the demo
 
+### Recommended external sample follow-up
+
+After running the built-in demo, these curated external/public samples are good next checks:
+
+```bash
+# External 835 sample (HDI)
+python3 -m src.cli external-test-files/hdi_835_all_fields.dat --summary
+python3 -m src.validate external-test-files/hdi_835_all_fields.dat
+
+# External 837 Professional sample (HDI)
+python3 -m src.cli external-test-files/hdi_837p_all_fields.dat --summary
+python3 -m src.validate external-test-files/hdi_837p_all_fields.dat
+
+# External 837 Institutional sample (HDI)
+python3 -m src.cli external-test-files/hdi_837i_all_fields.dat --summary
+python3 -m src.validate external-test-files/hdi_837i_all_fields.dat
+```
+
+> These external samples are useful compatibility references, not guarantees of universal payer compatibility. The external 837I sample still carries an `SE_COUNT_MISMATCH` that currently appears to be a source-file/data-quality issue rather than a parser bug.
+
 ```bash
 # From the project root
 ./demo/run.sh
@@ -207,6 +227,15 @@ Each `elements` dict maps `e{N}` (1-based) to its raw string value.
 | `IMPORT_GUIDE.txt` | Quick-reference import commands |
 
 ---
+
+## External sample notes
+
+- `external-test-files/hdi_835_all_fields.dat` — stronger external 835 reference sample
+- `external-test-files/hdi_837p_all_fields.dat` — stronger external 837 Professional reference sample
+- `external-test-files/hdi_837i_all_fields.dat` — stronger external 837 Institutional reference sample
+- `external-test-results/external_835_test_summary.json` — machine-generated external 835 run summary
+- `external-test-results/external_837_test_summary.json` — machine-generated external 837 run summary
+- `EXTERNAL_835_COMPATIBILITY_REPORT.md` — current external compatibility posture and caveats
 
 ## Pre-generated outputs
 
