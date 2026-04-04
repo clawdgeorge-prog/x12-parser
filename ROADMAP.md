@@ -101,7 +101,10 @@ These parse at the loop level but have no transaction-specific summaries.
 **Recommendation:** Low-risk, add after v0.2.
 
 ### Repetition separator (ISA-11) support
-Currently ISA-11 is treated as a space. If present and non-standard, the parser should use it to split repeated elements.
+- [x] Extraction from ISA segment (v0.2.1)
+- [ ] Usage for repeating element parsing (future)
+
+Currently ISA-11 is extracted from ISA but not yet used for segment parsing. If present and non-standard, the parser should use it to split repeated elements within segments.
 
 **Recommendation:** Implement when a fixture requiring it is available.
 
@@ -132,10 +135,11 @@ Currently ISA-11 is treated as a space. If present and non-standard, the parser 
 ### v0.3 — Rule-based Validation
 **Goal:** Catch more data quality issues without full TR3 parsing.
 
-1. Element data type table (segment → {element_index → type})
-2. Numeric/date/an/string field validation via type table
-3. Required element presence per transaction type (a lightweight TR3 approximation)
-4. Segment min/max occurrence checks
+1. [x] Small JSON companion-guide / payer-rule foundation (`--rules` packs with bounded presence/value assertions)
+2. Element data type table (segment → {element_index → type})
+3. Numeric/date/an/string field validation via type table
+4. Required element presence per transaction type (a lightweight TR3 approximation)
+5. Segment min/max occurrence checks
 
 ### v0.4 — Additional Transaction Types
 **Goal:** Expand platform to 270/271, 276/277, 278.
@@ -164,4 +168,4 @@ Currently ISA-11 is treated as a space. If present and non-standard, the parser 
 
 ---
 
-*Last updated: 2026-04-03*
+*Last updated: 2026-04-04*

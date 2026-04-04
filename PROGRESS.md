@@ -1,5 +1,92 @@
 # X12 Parser — Progress Log
 
+## Session: Dynamic ISA delimiter extraction (2026-04-04 — 16:00 MDT)
+
+### What Changed
+
+**A. Robust dynamic delimiter extraction:**
+- `_detect_delimiters()` now extracts element separator (ISA-3), component separator (ISA-16), and repetition separator (ISA-11) from the actual ISA segment
+- Parser uses detected delimiters for both tokenization and segment parsing
+- Falls back to defaults (*, :, ^, ~) if ISA not found
+
+**B. Added fixture for non-standard delimiters:**
+- Created `sample_835_alt_delimiters.edi` with +> delimiters (instead of standard *:~)
+- Tests verify parsing works correctly with both standard and alternative delimiters
+
+**C. Tests:**
+- Added `TestDelimiterDetection` class with 5 tests:
+  - `test_standard_delimiters_detected` — verifies *:^~ detection
+  - `test_alternative_delimiters_detected` — verifies +> detection
+  - `test_no_isa_returns_defaults` — verifies fallback behavior
+  - `test_alt_delimiter_file_parses_correctly` — integration test
+  - `test_standard_delimiter_file_still_works` — regression test
+
+**D. Documentation:**
+- Updated parser docstring scope to v0.2.1
+- Updated known limitations: repetition separator now extracted (not used yet)
+
+### Test Results
+
+- pytest: 91 parser tests + 50 validate tests = **141 passed** (was 140, added 5 new)
+- 2 pre-existing payer-rules test failures remain (unrelated to delimiter work)
+
+### What Remains Limited
+
+1. **Repetition separator (ISA-11)** — extracted but not used for segment parsing. The X12 spec allows repeating elements within segments (using ISA-11 as separator). This is not implemented yet.
+2. **Escaped delimiters** — No handling of escaped delimiter characters in data fields
+3. **Segment terminator detection** — currently assumes ~ or newline; could be extracted more robustly
+
+---
+
+## Session: Companion-guide / payer rules foundation (2026-04-04 — 15:55 MDT)
+
+### What Changed
+
+**A. New bounded payer-rules engine:**
+- Added `src/payer_rules.py`
+- JSON rule pack loader with schema validation (`load_rule_pack`)
+- Small rule engine that matches packs by `transaction_set`, `version`, `payer_name_contains`, and/or `payer_id`
+- Supported rule types kept intentionally tight:
+  - segment presence checks: `required`, `recommended`, `forbidden`
+  - simple value assertions: `equals`, `starts_with`, `in`
+- Result model returns normalized issues with machine-readable codes:
+  - `PAYER_RULE_REQUIRED_SEGMENT_MISSING`
+  - `PAYER_RULE_RECOMMENDED_SEGMENT_MISSING`
+  - `PAYER_RULE_FORBIDDEN_SEGMENT_PRESENT`
+  - `PAYER_RULE_VALUE_MISMATCH`
+
+**B. Validator hook / CLI integration:**
+- `src.validate` now supports `--rules <pack.json>`
+- Rule-pack issues merge into normal validator output / JSON output
+- Invalid or unreadable rule packs fail cleanly with exit code `2`
+- Added recommendations + categories for payer-rule issue codes
+
+**C. Example rule packs:**
+- `examples/rules/premier-835-companion.sample.json`
+- `examples/rules/medicare-837i-companion.sample.json`
+- Both are documented as examples only — not official payer guidance
+
+**D. Tests:**
+- Added `tests/test_payer_rules.py`
+- Covers:
+  - sample pack loading
+  - malformed pack rejection
+  - pack matching / non-matching behavior
+  - CLI `--rules` application
+  - CLI bad-pack exit behavior
+
+**E. Docs / planning updates:**
+- README updated with companion-rule usage and boundaries
+- ROADMAP updated to reflect the new rules foundation under v0.3
+- GAP_MATRIX workstream 5 marked DONE
+
+### Scope Boundaries Kept Honest
+
+- JSON packs only (no YAML / PDF parsing / proprietary guide ingestion)
+- No claim of full companion-guide coverage
+- No attempt to model full TR3 conditional logic
+- Designed as a small extension point, not a full rules platform
+
 ## Session: v0.2 Enhancement Pass (2026-04-03 — 16:40 MDT)
 
 ### What Changed
