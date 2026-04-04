@@ -297,7 +297,7 @@ _DISCREPANCY_TAXONOMY = {
         "description": "CLP paid amount differs from sum of SVC paid amounts",
     },
     "zero_pay_inconsistency": {
-        "severity": "warning",
+        "severity": "info",
         "description": "CLP status indicates denied/pending but service lines show non-zero payment",
     },
     "cas_adjustment_mismatch": {
@@ -998,31 +998,65 @@ class X12Parser:
             claims.append(current_claim)
 
         # ── Post-pass: discrepancy checks ─────────────────────────────────
+        # Denied/pended status codes that should normally have zero or minimal payment
+        DENIED_OR_PEND_STATUSES = frozenset(("4", "8", "16", "17", "24"))
+
         for cl in claims:
+            # 1. Billed amount mismatch (CLP vs SVC)
             billed_diff = round(abs(cl["clp_billed"] - cl["svc_billed"]), 2)
             if cl["clp_billed"] > 0 and billed_diff > 0.01:
                 cl["has_billed_discrepancy"] = True
+                disc_meta = _DISCREPANCY_TAXONOMY.get("billed_mismatch", {})
                 discrepancies.append({
                     "type": "billed_mismatch",
+                    "severity": disc_meta.get("severity", "warning"),
+                    "description": disc_meta.get("description", ""),
                     "claim_id": cl["claim_id"],
                     "clp_billed": cl["clp_billed"],
                     "sum_svc_billed": round(cl["svc_billed"], 2),
                     "difference": billed_diff,
                     "note": "CLP billed amount differs from sum of SVC billed amounts; "
-                            "verify CLP position 2 matches individual SVC amounts",
+                            "verify CLP element 2 matches individual SVC billed amounts",
                 })
+
+            # 2. Paid amount mismatch (CLP vs SVC)
             paid_diff = round(abs(cl["clp_paid"] - cl["svc_paid"]), 2)
             if cl["clp_paid"] > 0 and paid_diff > 0.01:
                 cl["has_paid_discrepancy"] = True
+                disc_meta = _DISCREPANCY_TAXONOMY.get("paid_mismatch", {})
                 discrepancies.append({
                     "type": "paid_mismatch",
+                    "severity": disc_meta.get("severity", "warning"),
+                    "description": disc_meta.get("description", ""),
                     "claim_id": cl["claim_id"],
                     "clp_paid": cl["clp_paid"],
                     "sum_svc_paid": round(cl["svc_paid"], 2),
                     "difference": paid_diff,
                     "note": "CLP paid amount differs from sum of SVC paid amounts; "
-                            "verify CLP position 4 matches individual SVC payment",
+                            "verify CLP element 4 matches individual SVC paid amounts",
                 })
+
+            # 3. Zero-pay / denied status inconsistency
+            # If CLP status is denial/pend but SVC shows non-zero paid, flag it.
+            # This is informational — some partial payments exist during pend.
+            if cl["status_code"] in DENIED_OR_PEND_STATUSES and cl["svc_paid"] > 0.01:
+                disc_meta = _DISCREPANCY_TAXONOMY.get("zero_pay_inconsistency", {})
+                discrepancies.append({
+                    "type": "zero_pay_inconsistency",
+                    "severity": disc_meta.get("severity", "info"),
+                    "description": disc_meta.get("description", ""),
+                    "claim_id": cl["claim_id"],
+                    "status_code": cl["status_code"],
+                    "status_label": cl.get("status_label", ""),
+                    "clp_paid": cl["clp_paid"],
+                    "svc_paid": round(cl["svc_paid"], 2),
+                    "difference": round(cl["svc_paid"], 2),
+                    "note": f"CLP status {cl['status_code']} ({cl.get('status_label', '')}) "
+                            f"suggests denial/pend but service lines show non-zero payment of "
+                            f"${round(cl['svc_paid'], 2)}; "
+                            f"verify whether payment was actually issued",
+                })
+
             # Save sorted list before enrichment overwrites it
             sorted_codes = sorted(cl["adjustment_group_codes"])
             cl["_adjustment_codes_sorted"] = sorted_codes
@@ -1044,9 +1078,75 @@ class X12Parser:
             cl["status_label"] = status_info["label"]
             cl["status_category"] = status_info["category"]
 
+        # ── Balancing summary ────────────────────────────────────────────────
+        # Computes overall reconciliation status at each 835 payment level.
+        # These are helpers for review — they do not assert accounting truth.
+        #
+        # Level 1 — Payment amount vs sum of paid amounts:
+        #   In a balanced 835: BPR amount ≈ sum(CLP paid) + PLB adjustments.
+        #   Since many payers put paid amounts in SVC rather than CLP e4/e6,
+        #   we compute sum_svc_paid as the aggregate of service-line paid amounts.
+        #   If CLP paid amounts are also present in the file, they are included
+        #   in total_paid and checked in parallel.
+        #   The relationship is: sum(paid) + PLB total ≈ BPR payment amount.
+        sum_svc_paid = round(sum(cl["svc_paid"] for cl in claims), 2)
+        sum_svc_billed = round(sum(cl["svc_billed"] for cl in claims), 2)
+
+        bpr_vs_clp_diff = None
+        bpr_vs_clp_balanced = None
+        # Prefer SVC-paid sum as the primary reconciliation target since many
+        # payers use SVC for payment detail rather than CLP e4/e6.
+        reconciliation_target = sum_svc_paid if sum_svc_paid > 0 else total_paid
+        if payment_amount is not None and reconciliation_target > 0:
+            bpr_vs_clp_diff = round(payment_amount - reconciliation_target, 2)
+            # A tolerance of $0.05 accommodates rounding in penny-perfect remits
+            bpr_vs_clp_balanced = abs(bpr_vs_clp_diff) <= 0.05
+
+        # Level 2 — PLB total vs expected accounting direction:
+        #   PLB adjustments can be positive or negative depending on context.
+        #   We track the sign to help reviewers understand direction.
+        plb_sign = "positive" if sum(plb_by_code.values()) >= 0 else "negative"
+
+        # Level 3 — Service-line presence:
+        #   Claims should have at least one service line unless denied/pended.
+        claims_without_svc = [
+            cl["claim_id"] for cl in claims
+            if cl["service_line_count"] == 0 and cl["status_code"] not in DENIED_OR_PEND_STATUSES
+        ]
+
+        balancing_summary = {
+            "bpr_payment_amount": payment_amount,
+            "sum_clp_paid": round(total_paid, 2),
+            "sum_svc_paid": sum_svc_paid,
+            "sum_svc_billed": sum_svc_billed,
+            "bpr_vs_clp_difference": bpr_vs_clp_diff,
+            "bpr_vs_clp_balanced": bpr_vs_clp_balanced,
+            "plb_sign": plb_sign,
+            "claims_without_service_lines": claims_without_svc,
+            "has_claim_discrepancies": any(
+                cl["has_billed_discrepancy"] or cl["has_paid_discrepancy"]
+                for cl in claims
+            ),
+            "discrepancy_count": len(discrepancies),
+        }
+
         # Collect claim-level data including status descriptions for top-level summary
         claims_out = []
         for cl in claims:
+            # Compute CAS adjustment total by group code for this claim
+            cas_by_group: dict[str, float] = {}
+            for seg in sum([l.segments for l in ts.loops if l.leader_tag == "CAS"], []):
+                if seg.tag == "CAS":
+                    grp = self._seg_get(seg, 2) or "?"
+                    for e_idx in range(3, min(len(seg.elements), 19), 2):
+                        raw = self._seg_get(seg, e_idx + 1)
+                        if raw:
+                            try:
+                                cas_by_group[grp] = cas_by_group.get(grp, 0.0) + float(raw)
+                            except ValueError:
+                                pass
+            cas_adjustment_sum = round(sum(cas_by_group.values()), 2)
+
             claims_out.append({
                 "claim_id": cl["claim_id"],
                 "status_code": cl["status_code"],
@@ -1066,6 +1166,9 @@ class X12Parser:
                     {"code": code, "label": _PLB_REASON_CODES.get(code, {"label": code, "category": "other"})["label"]}
                     for code in cl.get("_adjustment_codes_sorted", [])
                 ],
+                # CAS adjustment totals by group code
+                "cas_adjustment_sum": cas_adjustment_sum,
+                "cas_adjustments_by_group": {k: round(v, 2) for k, v in cas_by_group.items()},
             })
 
         summary.update({
@@ -1087,6 +1190,7 @@ class X12Parser:
             "bpr_payment_method_label": {"C": "Check", "H": "ACH"}.get(bpr_payment_method),
             "bpr_account_type": bpr_account_type,
             # Reconciliation helpers
+            "balancing_summary": balancing_summary,
             "claims": claims_out,
             "discrepancies": discrepancies,
             "plb_summary": {

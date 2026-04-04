@@ -1,6 +1,6 @@
 # X12 Parser — Gap Matrix & Execution Plan
 
-_Date started: 2026-04-04_
+_Date: 2026-04-04_
 
 ## Current Top 5 Priorities
 
@@ -8,8 +8,8 @@ _Date started: 2026-04-04_
 |---|---|---|---|---|---|
 | 1 | Dynamic ISA delimiter extraction | Biggest parser-hardening gap; required for real-world non-default X12 robustness | Dynamic extraction now implemented | Parse delimiters directly from ISA reliably, add tests/fixtures/docs, keep existing behavior stable | **DONE** |
 | 2 | Large 835 stress testing | Real remits can be much larger than current fixtures; parser not stress-tested | Small/medium fixtures only; README explicitly says not stress-tested | Add generated large-835 fixture strategy/benchmark tooling/tests and document safe limits/observations | IN PROGRESS |
-| 3 | Additional output modes | JSON-only is limiting for real ops/analytics | JSON + summary + validation only | Add high-value outputs first: CSV extracts and NDJSON and/or SQLite-ready normalized exports | IN PROGRESS |
-| 4 | Deeper 835 balancing checks | Important for remits/reconciliation credibility | Bounded discrepancy flags and helpers exist | Add stronger claim/service/payment/PLB balancing checks without overstating TR3 completeness | IN PROGRESS |
+| 3 | Additional output modes | JSON-only is limiting for real ops/analytics | JSON + summary + validation only | CSV extracts, NDJSON, and SQLite-ready normalized exports | ✅ DONE (v0.2.1) |
+| 4 | Deeper 835 balancing checks | Important for remits/reconciliation credibility | Balancing checks deepened in bounded, honest way | BPR vs CLP/SVC reconciliation, zero_pay_inconsistency, PLB ref format, balancing_summary block, discrepancy severity taxonomy, bounded tests/fixtures/docs | **DONE** |
 | 5 | Companion-guide / payer rules framework | Needed for real-world payer-specific evolution | Small JSON rule-pack foundation now implemented | Added bounded `--rules` support, JSON rule-pack loader/validation, two sample packs, docs, and tests | DONE |
 
 ## Secondary / Additional Gaps

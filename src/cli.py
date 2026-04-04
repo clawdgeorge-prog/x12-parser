@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """
-X12 Parse CLI — parse 835/837 files and emit structured JSON or a human-readable summary.
+X12 Parse CLI — parse 835/837 files and emit structured output.
+
+Supports three output formats:
+  json    — full nested JSON (default)
+  ndjson  — newline-delimited JSON (one record per line)
+  csv     — flat CSV files (claims, service lines, entities)
+  sqlite  — normalized CSV bundle + schema.sql ready for SQLite import
 
 Usage:
-    python3 -m src.cli <input.edi> [-o <output.json>] [--compact]
+    python3 -m src.cli <input.edi> [-o <output.json>]
+    python3 -m src.cli <input.edi> --format ndjson
+    python3 -m src.cli <input.edi> --format csv -o output_dir/
+    python3 -m src.cli <input.edi> --format sqlite -o output_dir/
     python3 -m src.cli <input.edi> --summary
 
 Examples:
     python3 -m src.cli tests/fixtures/sample_835.edi
     python3 -m src.cli tests/fixtures/sample_835.edi -o parsed.json
+    python3 -m src.cli tests/fixtures/sample_835.edi --format ndjson
+    python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
+    python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
     python3 -m src.cli tests/fixtures/sample_835.edi --compact
     python3 -m src.cli tests/fixtures/sample_835.edi --summary
     python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
@@ -23,6 +35,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.parser import X12Parser
+from src import exporter
 
 
 def _fmt_money(v) -> str:
@@ -159,13 +172,23 @@ def _format_summary(data: dict) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="X12 835/837 Parser")
+    parser = argparse.ArgumentParser(
+        description="X12 835/837 Parser — JSON, NDJSON, CSV, SQLite exports",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
     parser.add_argument("file", type=Path, help="Input X12 EDI file")
-    parser.add_argument("-o", "--output", type=Path, help="Output JSON file")
-    parser.add_argument("--compact", action="store_true", help="No indentation")
+    parser.add_argument("-o", "--output", type=Path, help="Output file or directory (format-dependent)")
+    parser.add_argument("--compact", action="store_true", help="No indentation in JSON output")
     parser.add_argument(
         "--summary", action="store_true",
-        help="Human-readable summary instead of full JSON",
+        help="Human-readable summary instead of structured output",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["json", "ndjson", "csv", "sqlite"],
+        default="json",
+        help="Output format: json (default), ndjson, csv, or sqlite",
     )
     args = parser.parse_args()
 
@@ -175,22 +198,60 @@ def main() -> None:
 
     try:
         p = X12Parser.from_file(args.file)
-        result = p.to_dict()
+        data = p.to_dict()
     except Exception as exc:
         print(f"ERROR parsing {args.file}: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # ── Summary mode (human-readable) ───────────────────────────────────────
     if args.summary:
-        text = _format_summary(result)
-    else:
-        indent = None if args.compact else 2
-        text = json.dumps(result, indent=indent, ensure_ascii=False)
+        text = _format_summary(data)
+        if args.output:
+            args.output.write_text(text)
+            print(f"[OK] Written: {args.output}")
+        else:
+            print(text)
+        return
 
-    if args.output:
-        args.output.write_text(text)
-        print(f"[OK] Written: {args.output}")
-    else:
-        print(text)
+    # ── Structured output modes ───────────────────────────────────────────────
+    if args.format == "json":
+        indent = None if args.compact else 2
+        text = json.dumps(data, indent=indent, ensure_ascii=False)
+        if args.output:
+            args.output.write_text(text)
+            print(f"[OK] Written: {args.output}")
+        else:
+            print(text)
+
+    elif args.format == "ndjson":
+        # NDJSON goes to file or stdout
+        if args.output:
+            with open(args.output, "w") as f:
+                count = exporter.emit_ndjson(data, file=f)
+            print(f"[OK] Written {count} NDJSON records: {args.output}")
+        else:
+            count = exporter.emit_ndjson(data)
+            # count not printed to stdout since emit writes to sys.stdout already
+
+    elif args.format == "csv":
+        out_dir = args.output or Path(".")
+        if not args.output:
+            out_dir = Path(".")
+        counts = exporter.write_csv(data, out_dir)
+        total = sum(counts.values())
+        for fname, cnt in sorted(counts.items()):
+            print(f"[OK] {fname}: {cnt} records")
+        print(f"Total: {total} records across {len(counts)} files in {out_dir}/")
+
+    elif args.format == "sqlite":
+        out_dir = args.output or Path(".")
+        if not args.output:
+            out_dir = Path(".")
+        counts = exporter.write_sqlite_bundle(data, out_dir)
+        total = sum(counts.values())
+        for fname, cnt in sorted(counts.items()):
+            print(f"[OK] {fname}: {cnt} records")
+        print(f"Total: {total} records across {len(counts)} files in {out_dir}/")
 
 
 if __name__ == "__main__":

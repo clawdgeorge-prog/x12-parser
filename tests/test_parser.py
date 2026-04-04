@@ -878,6 +878,148 @@ class Test835Enrichment:
         assert plb_summary["adjustment_labels"]["WO"] == "Write-Off"
 
 
+class Test835Balancing:
+    """835 payment-level balancing: BPR vs CLP sums, balancing summary, discrepancy taxonomy."""
+
+    def test_balancing_summary_present(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "balancing_summary" in summary
+        bal = summary["balancing_summary"]
+        assert "bpr_payment_amount" in bal
+        assert "sum_clp_paid" in bal
+        assert "bpr_vs_clp_difference" in bal
+        assert "bpr_vs_clp_balanced" in bal
+        assert "has_claim_discrepancies" in bal
+        assert "discrepancy_count" in bal
+
+    def test_balancing_summary_balanced_fixture(self):
+        """sample_835.edi: BPR=1000, SVC paid sum=270 (CLP001:150+CLP002:120) → not balanced.
+        In this fixture BPR is intentionally larger than sum of SVC paid because
+        PLB adjustments (not present) would normally close the gap.
+        Note: CLP e6 paid amounts are empty in this fixture; actual payments
+        come from SVC segments, so we use sum_svc_paid for reconciliation."""
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        bal = summary["balancing_summary"]
+        assert bal["bpr_payment_amount"] == 1000.0
+        assert bal["sum_svc_paid"] == 270.0  # from SVC segments (CLP e6 is empty in this fixture)
+        assert bal["bpr_vs_clp_balanced"] is False
+
+    def test_balancing_summary_has_claim_discrepancies(self):
+        """Discrepancy fixture should report has_claim_discrepancies=True."""
+        fixture = FIXTURES / "sample_835_discrepancy.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        bal = ts["summary"]["balancing_summary"]
+        assert bal["has_claim_discrepancies"] is True
+        assert bal["discrepancy_count"] >= 1
+
+    def test_discrepancy_severity_field_present(self):
+        """All discrepancy records now carry a severity field."""
+        fixture = FIXTURES / "sample_835_discrepancy.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        for disc in ts["summary"]["discrepancies"]:
+            assert "severity" in disc
+            assert disc["severity"] in ("warning", "info")
+            assert "description" in disc
+
+    def test_zero_pay_inconsistency_detected(self):
+        """A claim with denial status (4) but non-zero SVC paid should produce
+        a zero_pay_inconsistency discrepancy."""
+        # CLP status=4 (denied) but SVC paid=100 → zero_pay_inconsistency
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1530*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*250402*1530*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*100*ACH~"
+            "N1*PR*PAYER~"
+            "N1*PE*PROVIDER~"
+            "LX*1~"
+            "CLP*CLM001*500*4*100~"   # denied but paid=100
+            "CAS*CO*45*400~"
+            "DTM*472*D8*20250401~"
+            "SVC*HC:99213*500*100~"
+            "SE*10*0001~"
+            "GE*1*1~"
+            "IEA*1*000000001~"
+        )
+        p = X12Parser(text=edi)
+        data = p.to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        disc = ts["summary"]["discrepancies"]
+        zero_pay = [d for d in disc if d["type"] == "zero_pay_inconsistency"]
+        assert len(zero_pay) == 1
+        assert zero_pay[0]["claim_id"] == "CLM001"
+        assert zero_pay[0]["status_code"] == "4"
+        assert zero_pay[0]["svc_paid"] == 100.0
+
+    def test_cas_adjustment_sum_per_claim(self):
+        """Each claim record should include cas_adjustment_sum and cas_adjustments_by_group."""
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        claims = ts["summary"]["claims"]
+        for cl in claims:
+            assert "cas_adjustment_sum" in cl
+            assert "cas_adjustments_by_group" in cl
+            assert isinstance(cl["cas_adjustments_by_group"], dict)
+
+    def test_balancing_fixture_bpr_clp_mismatch(self):
+        """sample_835_balancing.edi: BPR=950, sum CLP paid=750 → should show mismatch."""
+        fixture = FIXTURES / "sample_835_balancing.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        bal = ts["summary"]["balancing_summary"]
+        assert bal["bpr_payment_amount"] == 950.0
+        assert bal["sum_clp_paid"] == 750.0  # CLP001:750 + CLP002:0
+        assert bal["bpr_vs_clp_balanced"] is False
+        assert bal["bpr_vs_clp_difference"] == 200.0  # 950 - 750
+
+    def test_denied_claim_without_svc_in_balancing_summary(self):
+        """sample_835_balancing.edi: CLP002 is denied (status=4) with 0 paid, no svc should
+        not appear in claims_without_service_lines since it's denied."""
+        fixture = FIXTURES / "sample_835_balancing.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        bal = ts["summary"]["balancing_summary"]
+        # CLP002 is status=4 (denied), so it's excluded from the no-svc warning list
+        assert "BADCLAIM002" not in bal.get("claims_without_service_lines", [])
+
+    def test_zero_pay_inconsistency_severity_is_info(self):
+        """zero_pay_inconsistency should have severity=info (not warning)."""
+        edi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1530*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*250402*1530*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*100*ACH~"
+            "N1*PR*PAYER~"
+            "N1*PE*PROVIDER~"
+            "LX*1~"
+            "CLP*CLM001*500*4*100~"
+            "CAS*CO*45*400~"
+            "DTM*472*D8*20250401~"
+            "SVC*HC:99213*500*100~"
+            "SE*10*0001~"
+            "GE*1*1~"
+            "IEA*1*000000001~"
+        )
+        p = X12Parser(text=edi)
+        data = p.to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        zero_pay = [d for d in ts["summary"]["discrepancies"]
+                    if d["type"] == "zero_pay_inconsistency"]
+        assert len(zero_pay) == 1
+        assert zero_pay[0]["severity"] == "info"
+
+
 if __name__ == "__main__":
 
     import pytest

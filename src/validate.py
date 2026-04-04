@@ -510,6 +510,74 @@ class X12Validator:
                                         "CLP", seg.get("position", 0),
                                     )
 
+        # ── 15. 835 BPR vs CLP sum reconciliation ───────────────────────────
+        # BPR e2 (payment amount) should approximately equal the sum of CLP e4 (paid amounts)
+        # plus PLB total adjustments. A discrepancy beyond tolerance may indicate
+        # a truncated transaction or a payer-specific non-standard layout.
+        # This is a reconciliation flag for human review — not a hard error.
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    if ts.get("set_id") != "835":
+                        continue
+                    summary = ts.get("summary", {})
+                    bal = summary.get("balancing_summary", {})
+                    if bal.get("bpr_vs_clp_balanced") is False:
+                        diff = bal.get("bpr_vs_clp_difference", 0)
+                        bpr_amt = bal.get("bpr_payment_amount")
+                        clp_sum = bal.get("sum_clp_paid")
+                        result.add_warning(
+                            "BPR_CLP_SUM_MISMATCH",
+                            f"Transaction {ts_idx + 1}: BPR payment amount (${bpr_amt}) "
+                            f"differs from sum of CLP paid amounts (${clp_sum}) by ${diff}; "
+                            f"verify the file is not truncated or that CLP paid amounts "
+                            f"are correctly extracted (this is a reconciliation flag for review)",
+                            "BPR", 0,
+                        )
+
+        # ── 16. 835 claim without service lines (non-denial status) ──────────
+        # Claims with non-denial status codes should generally have at least one
+        # service line (SVC). Claims without service lines and without denial/pend
+        # status may indicate a truncated claim or a payer-specific variant.
+        DENIED_OR_PEND = frozenset(("4", "8", "16", "17", "24"))
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    if ts.get("set_id") != "835":
+                        continue
+                    bal = ts.get("summary", {}).get("balancing_summary", {})
+                    for claim_id in bal.get("claims_without_service_lines", []):
+                        result.add_warning(
+                            "CLAIM_WITHOUT_SERVICE_LINES",
+                            f"Transaction {ts_idx + 1}: claim {claim_id!r} has no service "
+                            f"line segments (SVC) and is not in a denial/pend status; "
+                            f"verify the claim is complete and not truncated",
+                            "LX", 0,
+                        )
+
+        # ── 17. PLB reference format validation ─────────────────────────────
+        # PLB e3 should be formatted as "REASON:CLAIMREF" (e.g. "CV:CLP001").
+        # A reference without a colon may indicate a non-standard payer variant.
+        import re as _re
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    if ts.get("set_id") != "835":
+                        continue
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            if seg["tag"] == "PLB":
+                                ref = seg["elements"].get("e3", "").strip()
+                                if ref and ":" not in ref:
+                                    result.add_warning(
+                                        "PLB_REFERENCE_INVALID",
+                                        f"Transaction {ts_idx + 1}: PLB e3 (adjustment reference) "
+                                        f"at position {seg.get('position', 0)} has value {ref!r} "
+                                        f"without expected 'CODE:CLAIMREF' format; "
+                                        f"verify the adjustment is correctly attributed",
+                                        "PLB", seg.get("position", 0),
+                                    )
+
         return result
 
 
@@ -651,11 +719,14 @@ _ISSUE_CATEGORIES: dict[str, str] = {
     "N1_PE_MISSING":         "semantic",
     "NM1_BILLING_PROVIDER_MISSING": "semantic",
     "SVC_DATE_MISSING":      "semantic",
+    "BPR_CLP_SUM_MISMATCH":  "semantic",
+    "CLAIM_WITHOUT_SERVICE_LINES": "semantic",
     # Data quality
     "ISA_DATE_INVALID":      "data_quality",
     "ISA_TIME_INVALID":      "data_quality",
     "NON_NUMERIC_AMOUNT":    "data_quality",
     "CLAIM_ID_DUPLICATE":    "data_quality",
+    "PLB_REFERENCE_INVALID": "data_quality",
     # Content
     "UNKNOWN_SEGMENT":       "content",
 }
@@ -770,6 +841,19 @@ _ISSUE_RECOMMENDATIONS = {
     "CLP_STATUS_OUT_OF_RANGE": "CLP status code is outside the valid X12 range of 1-29. "
         "Valid codes: 1=Primary, 2=Secondary, 3=Tertiary, 4=Denied, 5=Pended, "
         "9-11=Forwarded, 12=Resubmission, 19-25=Dental forwarded, 27-29=Vision forwarded.",
+    "BPR_CLP_SUM_MISMATCH": "The BPR payment amount differs from the sum of CLP paid amounts "
+        "by more than $0.05 (rounding tolerance). "
+        "This is a reconciliation flag for human review — it may indicate a truncated file, "
+        "non-standard payer layout, or PLB adjustments that are not fully captured. "
+        "Do not treat this as an accounting error without verifying the source file.",
+    "CLAIM_WITHOUT_SERVICE_LINES": "A claim has no service line segments (SVC) and is not "
+        "in a denial or pended status. This may indicate a truncated claim record. "
+        "Verify the file is complete and that the payer does not use a non-standard "
+        "claim structure for this remittance.",
+    "PLB_REFERENCE_INVALID": "PLB e3 (adjustment reference) does not contain the expected "
+        "'REASON:CLAIMREF' colon-delimited format (e.g. 'CV:CLP001'). "
+        "The adjustment may still be valid but could indicate a non-standard payer variant. "
+        "Verify the adjustment was attributed to the correct claim.",
 }
 
 

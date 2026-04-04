@@ -1,7 +1,7 @@
 # X12 Parser — Roadmap & Gap Analysis
 
 **Version:** 0.2.0 (released 2026-04-03)
-**Date:** 2026-04-03
+**Date:** 2026-04-04
 **Scope:** This document covers 835 and 837 transaction types only.
 
 ---
@@ -45,9 +45,9 @@
 - ✅ Exit codes: 0 (clean), 1 (errors), 2 (parse failure)
 
 ### Test Coverage
-- ✅ 136 pytest tests (88 parser + 48 validate)
+- ✅ 158 pytest tests (97 parser + 61 validate)
 - ✅ 67 run_tests.py checks
-- ✅ 203 total automated checks
+- ✅ 225 total automated checks
 
 ---
 
@@ -63,12 +63,14 @@ Loop IDs are heuristic (first element of the leader segment, e.g., `CLP001`, `PR
 `total_billed_amount` in 835/837 summaries sums CLP/CLM e2 values. If segments are missing or amounts are in unexpected positions, totals may be inaccurate.
 
 ### Cross-segment financial reconciliation (bounded)
-The 835 summary now provides:
-- CLP-vs-SVC billed/paid discrepancy flags (per-claim)
-- CAS adjustment totals per claim (via `clp_adjustment` field)
-- PLB adjustment rollup by reason code
+The 835 summary provides:
+- CLP-vs-SVC billed/paid discrepancy flags (per-claim, with severity + description)
+- `zero_pay_inconsistency` detection (denied/pended status with non-zero SVC paid)
+- CAS adjustment totals per claim (`cas_adjustment_sum`, `cas_adjustments_by_group`)
+- PLB adjustment rollup by reason code (`plb_summary`)
+- **Payment-level balancing summary** (`balancing_summary`): BPR vs sum-of-paid comparison (tolerance $0.05), SVC-billed total, claims without service lines, discrepancy counts
 
-These are **flags and helpers**, not full accounting truth. Reconciliation does not modify data or assert equality — it surfaces mismatches for human review.
+These are **flags and helpers for human review**, not full accounting truth. Reconciliation does not modify data or assert equality — it surfaces mismatches for human review.
 
 ---
 
@@ -110,8 +112,9 @@ Currently ISA-11 is extracted from ISA but not yet used for segment parsing. If 
 
 ### CLI — additional output modes
 - [x] `--summary` flag to print only the transaction summary (human-readable)
-- `--extract claims` to print structured claim records
-- `--check-duplicates` to flag duplicate claim IDs
+- [x] `--format ndjson` — newline-delimited JSON (one record per line)
+- [x] `--format csv` — flat CSV files (claims, service lines, entities)
+- [x] `--format sqlite` — normalized CSV bundle + schema.sql for SQLite import
 
 ---
 
@@ -128,9 +131,10 @@ Currently ISA-11 is extracted from ISA but not yet used for segment parsing. If 
 6. [x] **HL hierarchy tree reconstruction for 837** (parent/child, billing_provider/subscriber/patient levels)
 7. [x] **837 claim-level rollups** with service-line aggregation and discrepancy flags
 8. [x] **835 claim-level rollups** (billed/paid/adjustment per CLP, SVC aggregation, discrepancy flags, PLB summary)
-9. [ ] SVC composite decomposition in JSON output
-10. [ ] `extract_claims()` helper returning structured claim records with adjustments
-11. [ ] Bounded dental-specific semantics beyond variant detection (only after fixtures/tests justify the claim)
+9. [x] **Deeper 835 balancing checks** (BPR vs CLP/SVC paid reconciliation, `zero_pay_inconsistency`, PLB reference format, `balancing_summary` block, discrepancy severity taxonomy)
+10. [ ] SVC composite decomposition in JSON output
+11. [ ] `extract_claims()` helper returning structured claim records with adjustments
+12. [ ] Bounded dental-specific semantics beyond variant detection (only after fixtures/tests justify the claim)
 
 ### v0.3 — Rule-based Validation
 **Goal:** Catch more data quality issues without full TR3 parsing.

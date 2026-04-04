@@ -7,6 +7,7 @@
 3. **Parse** an 837 EDI file → structured JSON
 4. **Validate** a clean fixture → clean pass
 5. **Summarize** an 835 or 837 file → human-readable summary (money amounts, claim counts, discrepancies)
+6. **Export** → CSV, NDJSON, or SQLite-ready normalized CSV bundle
 
 > Note: 837 Dental is included only as a bounded scaffold/demo case. Variant detection works, but dental-specific semantics are not yet deep enough to treat it as full production-grade support.
 
@@ -39,6 +40,15 @@ python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
 
 # Validate a clean fixture
 python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi
+
+# Export 835 → CSV (claims, service lines, entities)
+python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
+
+# Export 835 → NDJSON (newline-delimited JSON, one record per line)
+python3 -m src.cli tests/fixtures/sample_835.edi --format ndjson
+
+# Export 835 → SQLite bundle (normalized CSVs + schema.sql)
+python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
 ```
 
 ---
@@ -107,6 +117,23 @@ Result: CLEAN
 ============================================================
 ```
 
+### Export CSV — sample claims_835.csv output
+
+```
+claim_id,status_code,clp_billed,clp_paid,svc_billed,svc_paid,service_line_count,payer_name,provider_name,...
+CLP001,?,0.00,0.00,250.00,150.00,1,INSURANCE COMPANY ONE,PROVIDER CLINIC,...
+CLP002,?,0.00,0.00,150.00,120.00,1,INSURANCE COMPANY ONE,PROVIDER CLINIC,...
+```
+
+### Export NDJSON — sample records
+
+```
+{"_record_type": "interchange", "interchange_ctrl": "000000001", ...}
+{"_record_type": "functional_group", "gs_version": "005010X221A1", ...}
+{"_record_type": "transaction_set", "set_id": "835", "summary": {...}, ...}
+{"_record_type": "loop", "loop_id": "PR", "loop_kind": "entity", ...}
+```
+
 ---
 
 ## Output format — parsed JSON
@@ -153,6 +180,31 @@ The parser emits nested JSON:
 ```
 
 Each `elements` dict maps `e{N}` (1-based) to its raw string value.
+
+---
+
+## Output modes reference
+
+| Format | Flag | Output | Use case |
+|--------|------|--------|----------|
+| JSON (default) | `--format json` | Full nested JSON | Full structure, loop-level detail |
+| NDJSON | `--format ndjson` | One JSON object per line | Streaming, log-friendly, large files |
+| CSV | `--format csv -o dir/` | Flat CSV files per record type | Spreadsheet review, analytics |
+| SQLite | `--format sqlite -o dir/` | Normalized CSVs + schema.sql | Database import, SQL queries |
+
+### CSV/SQLite bundle — file inventory
+
+| File | Description |
+|------|-------------|
+| `claims_835.csv` | One row per CLP loop (835 remits) |
+| `claims_837.csv` | One row per CLM loop (837 claims) |
+| `service_lines.csv` | One row per SVC/SV1/SV2 service line |
+| `entities.csv` | One row per NM1/N1 entity (payer, provider, patient) |
+| `interchanges.csv` | One row per ISA envelope |
+| `functional_groups.csv` | One row per GS envelope |
+| `transactions.csv` | One row per ST/SE transaction set |
+| `schema.sql` | SQLite CREATE TABLE statements |
+| `IMPORT_GUIDE.txt` | Quick-reference import commands |
 
 ---
 

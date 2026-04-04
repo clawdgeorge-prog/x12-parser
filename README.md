@@ -95,11 +95,29 @@ The `plb_summary` block provides `adjustment_by_code` (PLB reason code → total
 
 JSON with nested envelopes, functional groups, transaction sets, loops, and per-transaction summaries. Each segment carries its raw `elements` dict (`e1`, `e2`, …) for downstream use.
 
+### Export modes
+
+Four output formats are available via `--format`:
+
+**`json` (default)** — full nested JSON. Every envelope, group, transaction, loop, and segment is represented. Intended for full structure inspection and API use.
+
+**`ndjson`** — newline-delimited JSON. One JSON object per line, ordered top-down: interchanges → functional groups → transaction sets → loops. Stream-friendly; suitable for large files where loading the full tree into memory is impractical. Records include `_record_type` field to distinguish levels.
+
+**`csv`** — flat denormalized CSV files. Writes four files to the output directory:
+  - `claims_835.csv` — one row per CLP loop from 835 transactions
+  - `claims_837.csv` — one row per CLM loop from 837 transactions
+  - `service_lines.csv` — one row per SVC/SV1/SV2 service line
+  - `entities.csv` — one row per NM1 or N1 entity (payer, provider, patient)
+
+**`sqlite`** — a normalized SQLite-ready export bundle. Writes all CSV files above plus three additional envelope-level CSVs (`interchanges.csv`, `functional_groups.csv`, `transactions.csv`), a `schema.sql` with `CREATE TABLE` statements, and an `IMPORT_GUIDE.txt` with copy-pasteable SQLite import commands.
+
+All monetary fields in CSV/SQLite exports are expressed as plain decimal strings (e.g. `"250.00"`) to match SQLite's real affinity. `null`/missing values are written as empty strings, which SQLite imports as blank (use `NULLIF(col,'')` in queries if you need `NULL` handling).
+
 ---
 
 ## CLI
 
-### Parse mode
+### Parse / Export CLI modes
 
 ```bash
 # Pretty-printed JSON (default)
@@ -113,6 +131,15 @@ python3 -m src.cli tests/fixtures/sample_835.edi --summary
 
 # Write to file
 python3 -m src.cli tests/fixtures/sample_835.edi -o output.json
+
+# NDJSON — one JSON object per line (streaming/large-file friendly)
+python3 -m src.cli tests/fixtures/sample_835.edi --format ndjson
+
+# CSV — flat CSV files per record type (claims, service lines, entities)
+python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
+
+# SQLite bundle — normalized CSVs + schema.sql ready for database import
+python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
 ```
 
 ### Validate mode
@@ -190,11 +217,13 @@ x12-parser/
 ├── src/
 │   ├── __init__.py       — package entry point
 │   ├── parser.py         — core parser (tokenizer, segment, loop, envelope, summary)
-│   ├── cli.py             — parse CLI (json output)
+│   ├── cli.py            — parse CLI (JSON/NDJSON/CSV/SQLite output)
+│   ├── exporter.py       — export engine (CSV, NDJSON, SQLite bundle)
 │   └── validate.py       — validate CLI (structural report + recommendations)
 ├── tests/
 │   ├── test_parser.py    — pytest unit tests
 │   ├── test_validate.py  — pytest validator tests
+│   ├── test_exporter.py  — pytest exporter tests (CSV, NDJSON, SQLite)
 │   └── fixtures/         — sample EDI files
 │       ├── sample_835.edi              — basic 835 (2 claims)
 │       ├── sample_835_rich.edi          — richer 835 (PLB, 4 LX, PER, 4 claims)
