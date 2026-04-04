@@ -36,11 +36,11 @@
 ### Test Results
 
 - `test_exporter.py`: **26 passed, 0 failed**
-- `test_parser.py`: 98 passed, 2 failed (pre-existing balancing failures — not related to this workstream)
-- `test_validate.py`: 48 passed (the 2 prior balancing failures are now fixed)
-- Total pytest: **188 passed, 2 failed**
+- `test_parser.py`: 98 passed, 0 failed (Workstream 4 fixed the prior balancing failures)
+- `test_validate.py`: 48 passed, 0 failed
+- Total pytest: **190 passed, 0 failed**
 - `run_tests.py`: **67 passed, 0 failed**
-- **Grand total: 281 automated checks passing**
+- **Grand total: 283 automated checks passing**
 
 ### What Remains Limited
 
@@ -51,7 +51,7 @@
 
 ### Ready for George Review
 
-- ✅ 281 tests pass (26 new exporter tests + 188 pytest + 67 run_tests)
+- ✅ 283 tests pass (26 new exporter tests + 190 pytest + 67 run_tests)
 - ✅ All docs updated: README, DEMO, ROADMAP, GAP_MATRIX
 - ✅ New exporter module clean and documented
 - ✅ CLI surface remains simple with one new `--format` flag
