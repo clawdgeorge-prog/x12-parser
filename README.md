@@ -4,6 +4,7 @@
 
 ```
 python3 -m src.cli  sample.edi                  # → JSON
+python3 -m src.cli  sample.edi --summary        # → human-readable summary
 python3 -m src.validate sample.edi               # → structural report
 ```
 
@@ -52,6 +53,7 @@ print(p.to_json())
 | **835** | Healthcare Claim Payment/Advice | ✅ Parsed |
 | **837 P** | Healthcare Claim — Professional (CMS-1500) | ✅ Parsed |
 | **837 I** | Healthcare Claim — Institutional (UB-04) | ✅ Parsed |
+| **837 D** | Healthcare Claim — Dental | ⚙️ Scaffolded (basic parse) |
 
 ### Envelope structure
 
@@ -65,9 +67,9 @@ Common 835 and 837 segments are detected and preserved with raw element extracti
 
 Each parsed transaction includes a `summary` block with computed fields:
 
-**835 summary:** `payment_amount`, `check_trace`, `total_billed_amount`, `total_allowed_amount`, `total_paid_amount`, `total_adjustment_amount`, `net_difference`, `claim_count`, `service_line_count`, `plb_count`, `duplicate_claim_ids`, `payer_name`, `provider_name`
+**835 summary:** `payment_amount`, `check_trace`, `total_billed_amount`, `total_allowed_amount`, `total_paid_amount`, `total_adjustment_amount`, `net_difference`, `claim_count`, `service_line_count`, `plb_count`, `duplicate_claim_ids`, `payer_name`, `provider_name`, `bpr_payment_method`, `bpr_payment_method_label`, `claims`
 
-**837 summary:** `total_billed_amount`, `claim_count`, `service_line_count`, `hl_count`, `duplicate_claim_ids`, `billing_provider`, `payer_name`, `submitter_name`, `subscriber_name`, `patient_name`, `bht_id`, `bht_date`, `hierarchy`, `claims`
+**837 summary:** `total_billed_amount`, `claim_count`, `service_line_count`, `hl_count`, `duplicate_claim_ids`, `billing_provider`, `payer_name`, `submitter_name`, `subscriber_name`, `patient_name`, `bht_id`, `bht_date`, `variant`, `variant_indicator`, `service_line_type`, `hierarchy`, `claims`
 
 **837 hierarchy semantics** — the `hierarchy` block provides:
 - `hl_tree`: full list of HL segments with `id`, `parent_id`, `level_code`, `child_code`, and `level_role` (`billing_provider` / `subscriber` / `patient` / `other`)
@@ -81,11 +83,12 @@ The `claims` list provides one entry per CLM segment with `claim_id`, `clp_bille
 - `svc_billed`, `svc_paid` (sum of SVC service lines within the claim)
 - `service_line_count`
 - `has_billed_discrepancy` / `has_paid_discrepancy` flags
-- `adjustment_group_codes` (CAS group codes present on the claim)
+- `adjustment_group_codes` (enriched with `code` + `label` from CAS group codes)
+- `status_label` (human-readable CLP status description) and `status_category` (paid/pended/denied/etc.)
 
 The `discrepancies` list at transaction level contains one entry per flagged mismatch with `type`, `claim_id`, amounts, and a `note` with guidance.
 
-The `plb_summary` block provides `adjustment_by_code` (PLB reason code → total amount) and `total_plb_adjustment` for provider-level adjustments.
+The `plb_summary` block provides `adjustment_by_code` (PLB reason code → total amount), `adjustment_labels` (code → description), and `total_plb_adjustment` for provider-level adjustments.
 
 ### Output
 
@@ -104,6 +107,9 @@ python3 -m src.cli tests/fixtures/sample_835.edi
 # Compact JSON (no indentation)
 python3 -m src.cli tests/fixtures/sample_835.edi --compact
 
+# Human-readable summary (money amounts, claim counts, discrepancies)
+python3 -m src.cli tests/fixtures/sample_835.edi --summary
+
 # Write to file
 python3 -m src.cli tests/fixtures/sample_835.edi -o output.json
 ```
@@ -121,6 +127,11 @@ Structural validation checks include:
 - **Non-numeric amount warnings** (CLP, SVC, CAS monetary fields)
 - **Duplicate claim ID warnings** (CLP for 835, CLM for 837)
 - Unknown segment tag warnings
+- **837 variant detection** — automatically detects Professional / Institutional / Dental from SV1/SV2/UD segments; warns when institutional claims lack HI diagnosis codes
+- **835 entity checks** — warns when N1*PR (payer) or N1*PE (provider) is absent
+- **837 billing provider check** — warns when NM1 billing provider entity is absent
+- **CLP status code validation** — warns on non-numeric or out-of-range (1–29) CLP status codes
+- **Issue categories** — every issue is tagged: `envelope`, `segment_structure`, `semantic`, `data_quality`, `content`
 - **Actionable recommendations** in JSON output (`--verbose` for text)
 
 ```bash

@@ -6,6 +6,7 @@
 2. **Validate** an 835 EDI file → structural report
 3. **Parse** an 837 EDI file → structured JSON
 4. **Validate** a clean fixture → clean pass
+5. **Summarize** an 835 or 837 file → human-readable summary (money amounts, claim counts, discrepancies)
 
 ---
 
@@ -22,11 +23,17 @@ Or run each command individually:
 # Parse 835 → JSON (compact)
 python3 -m src.cli tests/fixtures/sample_835.edi --compact
 
+# Summarize 835 → human-readable summary
+python3 -m src.cli tests/fixtures/sample_835.edi --summary
+
 # Validate 835 → structural report
 python3 -m src.validate tests/fixtures/sample_835.edi
 
 # Parse 837 → JSON (compact)
 python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact
+
+# Summarize 837 → human-readable summary (includes HL hierarchy)
+python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
 
 # Validate a clean fixture
 python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi
