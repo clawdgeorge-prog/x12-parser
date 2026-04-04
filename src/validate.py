@@ -174,6 +174,7 @@ class X12Validator:
         # Well-known inner-segment tags for orphan detection.
         # Covers 835/837 body segments; unknown tags generate a warning.
         # TS2/TS3 = 835 transaction statistics (optional, recognized but not deeply semanticized)
+        # PRV/CL1/PWK/OI/SVD = 837 segment tags (recognized for bounded support; may add light enrichment later)
         VALID_INNER_TAGS = frozenset((
             "BPR", "TRN", "DTM", "N1", "N3", "N4", "REF", "LX", "CLP", "CAS",
             "NM1", "SVC", "ADJ", "DTP", "BHT", "HL", "PER", "SBR", "HI",
@@ -181,6 +182,8 @@ class X12Validator:
             "HCP", "CUR", "NTE", "PAT", "LIN", "CR1", "CR2", "CR3", "CR4",
             "CR5", "RDM", "PLB", "RMR", "ENT", "NME", "NX1", "K1",
             "CLM", "BPR", "LQ", "F9", "N2", "G93", "TS2", "TS3", "MIA", "MOA",
+            # 837 recognized segments (bounded support)
+            "PRV", "CL1", "PWK", "OI", "SVD",
         ))
 
         # Identify orphan ISA/IEA/GS/GE segments that appear outside interchanges
@@ -369,13 +372,29 @@ class X12Validator:
                             "SVC", seg.position,
                         )
             elif seg.tag == "CAS":
-                # e2-e19: adjustment amounts
-                for e_idx in range(1, min(len(seg.elements), 19)):
+                # CAS repeating group: e1=group code, then (e2=reason, e3=amount, e4=quantity) repeating
+                # So amounts are at indices 2, 5, 8, 11, 14, 17; quantities at 3, 6, 9, 12, 15, 18
+                amount_indices = [2, 5, 8, 11, 14, 17]
+                qty_indices = [3, 6, 9, 12, 15, 18]
+                for e_idx in amount_indices:
+                    if e_idx >= len(seg.elements):
+                        continue
                     raw = seg.elements[e_idx].raw.strip() if seg.elements[e_idx].raw else ""
                     if raw and not _is_numeric(raw):
                         result.add_warning(
                             "NON_NUMERIC_AMOUNT",
                             f"CAS at position {seg.position}: adjustment amount "
+                            f"({raw!r}) is not a valid number",
+                            "CAS", seg.position,
+                        )
+                for e_idx in qty_indices:
+                    if e_idx >= len(seg.elements):
+                        continue
+                    raw = seg.elements[e_idx].raw.strip() if seg.elements[e_idx].raw else ""
+                    if raw and not _is_numeric(raw):
+                        result.add_warning(
+                            "NON_NUMERIC_AMOUNT",
+                            f"CAS at position {seg.position}: adjustment quantity "
                             f"({raw!r}) is not a valid number",
                             "CAS", seg.position,
                         )
