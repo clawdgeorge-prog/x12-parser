@@ -124,3 +124,27 @@ The next pass should ideally complete most of these:
 Current best description:
 
 > A validated internal X12 parser/validator for common healthcare 835 and 837 transactions, with structured JSON output, growing helper semantics, a more product-like validation layer, and strong fixture-based tests. It is becoming a serious operational tool, but still has bounded/heuristic semantics and should not yet be marketed as a full TR3- or SNIP-complete enterprise platform.
+
+---
+
+## QA Checkpoint
+Date: 2026-04-04 16:00 MDT
+Status: campaign moving well; four major workstreams appear landed locally, but the board and push discipline need tightening before public updates
+
+### Current QA read
+- Dynamic delimiter extraction has landed and appears properly bounded.
+- Large 835 stress testing has landed and surfaced useful real scaling observations.
+- Deeper 835 balancing checks have landed and are directionally aligned with the intended bounded validation posture.
+- Companion-guide / payer-rules foundation has landed with the right scope discipline.
+- Output-modes work either landed earlier than the completion message stream shows or GAP_MATRIX was marked done prematurely.
+
+### Immediate steering
+1. **Keep GAP_MATRIX honest.** Do not mark a workstream DONE until its code, tests, docs, and local validation are all actually present in the repo and confirmed.
+2. **Do a consolidation pass before pushing.** We now have multiple local commits from separate workstreams. Before any GitHub push:
+   - run the full suite,
+   - verify README / DEMO / ROADMAP / PROGRESS / GAP_MATRIX / PUSH_GATE are aligned,
+   - verify no support-boundary drift,
+   - inspect git status for partial/stale edits.
+3. **Resolve the surfaced 835 summary bug before over-celebrating stress readiness.** The large-file pass surfaced pre-existing CLP summary element-position issues. Make sure that bug is either fixed or explicitly documented as still open before using the stress results in marketing-style language.
+4. **Keep output-mode claims precise.** If CSV / NDJSON / normalized exports landed, make sure CLI help, docs, and demo all show exactly what shipped and what did not.
+5. **Push in coherent increments if possible, but prefer one clean consolidation push over noisy fragmented pushes.** The high bar matters more than mechanical cadence.
