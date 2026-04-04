@@ -1,5 +1,90 @@
 # X12 Parser — Progress Log
 
+## Session: v0.2 Enhancement Pass (2026-04-03 — 16:40 MDT)
+
+### What Changed
+
+**A. Validation improvements:**
+- `_VALIDATION_RULES` schema-driven rule table: maps transaction type → segment → rule dict (`required`, `severity`, `description`) — foundation for externalized rule definitions
+- `_ISSUE_CATEGORIES` taxonomy: `envelope`, `segment_structure`, `semantic`, `data_quality`, `content`
+- New validation checks:
+  - `N1_PR_MISSING` / `N1_PE_MISSING`: 835 N1 entity presence (warns if N1*PR or N1*PE absent)
+  - `NM1_BILLING_PROVIDER_MISSING`: 837 billing provider entity presence
+  - `HI_MISSING_INSTITUTIONAL`: warns when SV2 present but no HI diagnosis codes
+  - `CLP_STATUS_INVALID` / `CLP_STATUS_OUT_OF_RANGE`: CLP status code sanity (1–29 per X12 TR3)
+- `Issue.category` field populated via `_ISSUE_CATEGORIES` lookup in `add_error`/`add_warning`
+- `format_report()`: category shown in verbose mode (in brackets after issue code)
+- `format_json()`: `category` field included in issue JSON
+- Recommendations added for all new issue codes
+
+**B. Semantic modeling improvements:**
+- 837 variant detection: `_detect_837_variant()` identifies `professional` (SV1), `institutional` (SV2), `dental` (UD) from segment presence; returns `variant`, `indicator` (P/I/D), `service_line_type`
+- `_compute_837_summary()` now includes `variant`, `variant_indicator`, `service_line_type`
+- `_TRANSACTION_REGISTRY` version map: 005010X221A1 → 835, 005010X222A1 → 837P, 005010X223A1 → 837I, 005010X224A1 → 837D
+- `_CLP_STATUS_CODES`: complete X12 CLP status code table (1–29) with labels and categories (paid/pended/denied/forwarded/informational/unknown)
+- `_PLB_REASON_CODES`: common CAS group codes (CO/PR/PI/AO/WO/CV/etc.) with labels
+- 835 BPR enrichment: `bpr_payment_method` (e1) and `bpr_account_type` (e15) extracted; `bpr_payment_method_label` maps C→Check, H→ACH
+- 835 claim records: `status_label` and `status_category` added; `adjustment_group_codes` enriched with `code`+`label` per entry
+- 835 `plb_summary`: `adjustment_labels` dict (code → description)
+
+**C. Version / transaction awareness:**
+- `_detect_837_variant()` detects 837P/837I/837D from segment content (SV1/SV2/UD presence)
+- GS version string accessible via `to_dict()` (GS header e8 in functional group JSON)
+- `_get_gs_version()` helper added to X12Parser
+- 837 Dental: scaffolded — parses correctly, variant detected, but semantic rules (UD segments, procedure codes) not fully modeled
+
+**D. Schema-driven groundwork:**
+- `_VALIDATION_RULES` dict: transaction-type → segment → rule with severity and description
+- `_ISSUE_CATEGORIES` dict: issue code → category taxonomy
+- Clean constants for CLP status codes, PLB reason codes, transaction registry, GS functional codes
+
+**E. Fixtures / tests:**
+- New fixture: `sample_837_dental.edi` — 837 with UD segments (dental variant, version 005010X224A1)
+- New fixture: `sample_835_discrepancy.edi` — 835 with CLP billed mismatch (CLP=1000, SVC=250 → detected)
+- 21 new pytest tests:
+  - `Test837VariantDetection`: 4 tests (professional/institutional SV1/SV2, institutional HI warning, dental UD)
+  - `TestValidate835EntityChecks`: 4 tests (N1 PR/PE presence, missing PR warning, missing PE warning)
+  - `TestValidateCLPStatusCodes`: 3 tests (clean=valid, invalid non-numeric, out-of-range 99)
+  - `TestValidateIssueCategories`: 2 tests (category in JSON, envelope/segment_structure categories)
+  - `Test837VariantDetection` (parser): 3 tests (professional/institutional/dental variant indicators)
+  - `Test835Enrichment`: 6 tests (BPR method, BPR label, CLP status labels, discrepancy fixture, PLB adjustment labels)
+
+**F. Product surface / docs:**
+- CLI `--summary` flag: human-readable summary with money formatting, claim counts, discrepancies, PLB adjustments, HL hierarchy tree
+- `cli.py` updated: new `_format_summary()` and `_fmt_money()` helpers
+- README.md: v0.2.0 documented, 837D added to support matrix, new validation checks listed, `--summary` flag documented, 835/837 summary fields updated
+- DEMO.md: demo commands updated (no functional change — demo already worked)
+- PROGRESS.md: new session logged
+- ROADMAP.md: v0.2 items updated
+
+### Test Results
+
+- run_tests.py: **67 passed, 0 failed**
+- pytest: **136 passed, 0 failed** (113 existing + 21 new + 2 fixed)
+- **Total: 203 automated checks passing**
+
+### What Remains Limited
+
+1. **837 Dental**: scaffolded only — UD segments parsed, variant detected, but procedure code modeling and dental-specific semantic rules not implemented. Do not advertise full dental support.
+2. **Schema validation**: No segment-order validation, element-level required checks, or code-value cross-checks against official X12 TR3 specs.
+3. **Cross-segment amount reconciliation**: CLP/SVC mismatches are flagged as discrepancies (for review), not asserted as errors. Not accounting truth.
+4. **Composite decomposition**: Composite elements (`"12:345"`) returned as strings.
+5. **Non-standard delimiters**: Only handles `*`:`:`:`~`. ISA-11 repetition separator treated as data.
+6. **Large file performance**: Not stress-tested.
+7. **Escaped delimiters**: No handling of escaped delimiter characters in data.
+
+### Ready for George Review
+
+- ✅ 203 tests pass (67 + 136), no regressions
+- ✅ All 4 docs updated: README, ROADMAP, PROGRESS, DEMO
+- ✅ 2 new fixtures added (dental, discrepancy)
+- ✅ CLI `--summary` flag working
+- ✅ No dishonest marketing — dental scaffolded, not full support
+- ✅ Parser scope version bumped to v0.2.0
+- ✅ New features backed by tests
+
+---
+
 ## Session: 837 Hierarchy & 835 Reconciliation Pass (2026-04-03 — 13:54 MDT)
 
 ### What Changed

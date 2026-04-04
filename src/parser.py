@@ -1,18 +1,20 @@
 """
 X12 Parser — Healthcare EDI 835/837 transactions.
 
-Scope (v0.1.0):
+Scope (v0.2.0):
   - ISA/IEA envelope parsing
   - GS/GE functional-group envelope
   - ST/SE transaction set framing
   - 835: Healthcare Claim Payment/Advice
-  - 837: Healthcare Claim (Professional & Institutional)
+  - 837: Healthcare Claim — Professional (CMS-1500)
+  - 837: Healthcare Claim — Institutional (UB-04)
+  - 837: Healthcare Claim — Dental (basic scaffolding)
   - Segment, loop, and element extraction
+  - Transaction summaries with financial totals, claim counts, HL hierarchy
   - Structured JSON output
 
 Known limitations (documented in README):
   - No schema validation against official X12 specs
-  - No segment-by-segment semantic validation
   - Composite elements returned as strings (not decomposed)
   - Repetition separator (ISA-11) treated as space
 """
@@ -195,6 +197,93 @@ _LOOP_837 = {
     "2440":  "Form Identification",
 }
 
+
+# ── Transaction / version registry ─────────────────────────────────────────
+# Maps X12 version strings to human-readable transaction type labels.
+# Keyed by the version string found in GS-8 (functional code) or ST-3.
+_TRANSACTION_REGISTRY: dict[str, dict] = {
+    # 835 — Healthcare Claim Payment/Advice
+    "005010X221A1": {
+        "set_id": "835",
+        "name": "Healthcare Claim Payment/Advice",
+        "description": "835 — Payment/Remittance",
+        "category": "payment",
+    },
+    # 837 — Healthcare Claim
+    "005010X222A1": {
+        "set_id": "837",
+        "name": "Healthcare Claim — Professional (CMS-1500)",
+        "description": "837P — Professional Claim",
+        "category": "claim",
+        "variant": "professional",
+    },
+    "005010X223A1": {
+        "set_id": "837",
+        "name": "Healthcare Claim — Institutional (UB-04)",
+        "description": "837I — Institutional Claim",
+        "category": "claim",
+        "variant": "institutional",
+    },
+    "005010X224A1": {
+        "set_id": "837",
+        "name": "Healthcare Claim — Dental",
+        "description": "837D — Dental Claim",
+        "category": "claim",
+        "variant": "dental",
+    },
+}
+
+# GS functional code → set_id / category mapping (used when version string not available)
+_GS_FUNCTIONAL_CODES: dict[str, dict] = {
+    "HP": {"set_id": "835", "name": "Healthcare Claim Payment/Advice", "category": "payment"},
+    "HC": {"set_id": "837", "name": "Healthcare Claim", "category": "claim"},
+    "HI": {"set_id": "837", "name": "Healthcare Claim — Institutional", "category": "claim"},
+}
+
+# CLP status codes — maps numeric code to description and category
+_CLP_STATUS_CODES: dict[str, dict] = {
+    "1":  {"label": "Processed as Primary",         "category": "paid"},
+    "2":  {"label": "Processed as Secondary",       "category": "paid"},
+    "3":  {"label": "Processed as Tertiary",         "category": "paid"},
+    "4":  {"label": "Denied",                      "category": "denied"},
+    "5":  {"label": "Pended",                      "category": "pended"},
+    "6":  {"label": "Pending",                    "category": "pended"},
+    "7":  {"label": "Received — Not Yet Processed", "category": "pended"},
+    "8":  {"label": "Not Processed",               "category": "denied"},
+    "9":  {"label": "Processed as Primary — Forwarded to Another Payer", "category": "forwarded"},
+    "10": {"label": "Processed as Secondary — Forwarded to Another Payer",  "category": "forwarded"},
+    "11": {"label": "Processed as Tertiary — Forwarded to Another Payer",   "category": "forwarded"},
+    "12": {"label": "Resubmission",                 "category": "resubmission"},
+    "13": {"label": "Audit Complete",               "category": "completed"},
+    "14": {"label": "Matched to Original Claim",    "category": "pended"},
+    "15": {"label": "Claim Contains No Payment or Return Claim Information", "category": "informational"},
+    "16": {"label": "Claim Was Returned — More Information Needed",          "category": "pended"},
+    "17": {"label": "Claim Was Returned — Invalid",  "category": "denied"},
+    "19": {"label": "Processed as Primary — Forwarded to Dental",  "category": "forwarded"},
+    "20": {"label": "Processed as Secondary — Forwarded to Dental", "category": "forwarded"},
+    "21": {"label": "Processed as Tertiary — Forwarded to Dental",  "category": "forwarded"},
+    "22": {"label": "Forwarded to Dental — Additional Information Needed", "category": "pended"},
+    "23": {"label": "Forwarded to Dental — Already Paid",           "category": "informational"},
+    "24": {"label": "Forwarded to Dental — Cannot Process",        "category": "denied"},
+    "25": {"label": "Cannot Process — Forwarded to Another Payer","category": "forwarded"},
+    "27": {"label": "Processed as Primary — Forwarded to Vision",  "category": "forwarded"},
+    "28": {"label": "Processed as Secondary — Forwarded to Vision", "category": "forwarded"},
+    "29": {"label": "Processed as Tertiary — Forwarded to Vision",  "category": "forwarded"},
+}
+
+# PLB adjustment reason codes — common group codes used in 835 PLB and CAS segments
+_PLB_REASON_CODES: dict[str, dict] = {
+    "CO": {"label": "Contractual Obligation",     "category": "contractual"},
+    "PR": {"label": "Patient Responsibility",    "category": "patient"},
+    "PI": {"label": "Payer Initiated Reduction", "category": "payer"},
+    "AO": {"label": "Administrative/Scientific",   "category": "administrative"},
+    "WO": {"label": "Write-Off",                 "category": "writeoff"},
+    "CV": {"label": "Covered",                   "category": "covered"},
+    "CAD": {"label": "Carve-Out",               "category": "carveout"},
+    "DISC": {"label": "Discount",               "category": "discount"},
+    "LAB": {"label": "Laboratory",              "category": "lab"},
+    "ODO": {"label": "Dental",                 "category": "dental"},
+}
 
 # Kind inference from leader tag / code
 _LOOP_KINDS = {
@@ -574,6 +663,71 @@ class X12Parser:
         """Get element value from a Segment, optionally sub-element."""
         return self._seg_parser.get(seg, index, sub_index)
 
+    def _get_gs_version(self, fg: FunctionalGroup) -> Optional[str]:
+        """Return the version string from GS-8 (e.g., '005010X221A1')."""
+        return self._seg_get(fg.header, 8)
+
+    def _get_gs_functional_code(self, fg: FunctionalGroup) -> Optional[str]:
+        """Return the GS functional code (e.g., 'HP', 'HC', 'HI')."""
+        return self._seg_get(fg.header, 1)
+
+    def _detect_837_variant(self, ts: TransactionSet) -> dict:
+        """
+        Detect whether an 837 transaction is Professional, Institutional, or Dental
+        based on segment content.
+
+        Returns a dict with keys: variant, service_line_type, indicator.
+        Indicator is a short code: 'P' (professional), 'I' (institutional), 'D' (dental).
+        """
+        all_tags: set[str] = set()
+        has_sv1 = has_sv2 = has_ud = False
+        for loop in ts.loops:
+            for seg in loop.segments:
+                all_tags.add(seg.tag)
+                if seg.tag == "SV1":
+                    has_sv1 = True
+                elif seg.tag == "SV2":
+                    has_sv2 = True
+                elif seg.tag == "UD":
+                    has_ud = True
+
+        # SV2 is institutional-only; UD is dental-only; SV1 is professional-only
+        if has_ud and not has_sv1:
+            variant = "dental"
+            indicator = "D"
+            service_type = "dental"
+        elif has_sv2 and not has_sv1:
+            variant = "institutional"
+            indicator = "I"
+            service_type = "institutional"
+        elif has_sv1:
+            variant = "professional"
+            indicator = "P"
+            service_type = "professional"
+        else:
+            # Fallback: check for specific NM1 qualifiers that appear in each variant
+            nm1_77 = any(
+                loop.leader_tag == "NM1" and loop.leader_code == "77"
+                for loop in ts.loops
+            )
+            if nm1_77:
+                variant = "institutional"
+                indicator = "I"
+                service_type = "institutional"
+            else:
+                variant = "professional"
+                indicator = "P"
+                service_type = "professional"
+
+        return {
+            "variant": variant,
+            "indicator": indicator,
+            "service_line_type": service_type,
+            "has_sv1": has_sv1,
+            "has_sv2": has_sv2,
+            "has_ud": has_ud,
+        }
+
     def _compute_835_summary(self, ts: TransactionSet) -> dict:
         """
         Compute financial summary for an 835 transaction.
@@ -809,7 +963,50 @@ class X12Parser:
                     "note": "CLP paid amount differs from sum of SVC paid amounts; "
                             "verify CLP position 4 matches individual SVC payment",
                 })
-            cl["adjustment_group_codes"] = sorted(cl["adjustment_group_codes"])
+            # Save sorted list before enrichment overwrites it
+            sorted_codes = sorted(cl["adjustment_group_codes"])
+            cl["_adjustment_codes_sorted"] = sorted_codes
+
+        # ── BPR metadata enrichment ─────────────────────────────────────────
+        bpr_payment_method = None
+        bpr_account_type = None
+        for loop in ts.loops:
+            for seg in loop.segments:
+                if seg.tag == "BPR":
+                    bpr_payment_method = self._seg_get(seg, 1)   # C=check, H=ACH, etc.
+                    bpr_account_type = self._seg_get(seg, 15)   # checking/savings
+                    break
+
+        # ── Enrich claim records with status descriptions ───────────────────
+        for cl in claims:
+            sc = cl.get("status_code", "?")
+            status_info = _CLP_STATUS_CODES.get(sc, {"label": f"Unknown ({sc})", "category": "unknown"})
+            cl["status_label"] = status_info["label"]
+            cl["status_category"] = status_info["category"]
+
+        # Collect claim-level data including status descriptions for top-level summary
+        claims_out = []
+        for cl in claims:
+            claims_out.append({
+                "claim_id": cl["claim_id"],
+                "status_code": cl["status_code"],
+                "status_label": cl.get("status_label", ""),
+                "status_category": cl.get("status_category", "unknown"),
+                "patient_name": cl.get("patient_name"),
+                "clp_billed": cl["clp_billed"],
+                "clp_allowed": cl["clp_allowed"],
+                "clp_paid": cl["clp_paid"],
+                "clp_adjustment": round(cl["clp_adjustment"], 2),
+                "svc_billed": round(cl["svc_billed"], 2),
+                "svc_paid": round(cl["svc_paid"], 2),
+                "service_line_count": cl["service_line_count"],
+                "has_billed_discrepancy": cl["has_billed_discrepancy"],
+                "has_paid_discrepancy": cl["has_paid_discrepancy"],
+                "adjustment_group_codes": [
+                    {"code": code, "label": _PLB_REASON_CODES.get(code, {"label": code, "category": "other"})["label"]}
+                    for code in cl.get("_adjustment_codes_sorted", [])
+                ],
+            })
 
         summary.update({
             "payment_amount": payment_amount,
@@ -825,11 +1022,19 @@ class X12Parser:
             "duplicate_claim_ids": duplicate_claim_ids,
             "payer_name": payer_name,
             "provider_name": provider_name,
+            # Enrichment
+            "bpr_payment_method": bpr_payment_method,
+            "bpr_payment_method_label": {"C": "Check", "H": "ACH"}.get(bpr_payment_method),
+            "bpr_account_type": bpr_account_type,
             # Reconciliation helpers
-            "claims": claims,
+            "claims": claims_out,
             "discrepancies": discrepancies,
             "plb_summary": {
                 "adjustment_by_code": {k: round(v, 2) for k, v in plb_by_code.items()},
+                "adjustment_labels": {
+                    k: _PLB_REASON_CODES.get(k, {"label": k, "category": "other"})["label"]
+                    for k in plb_by_code
+                },
                 "total_plb_adjustment": round(sum(plb_by_code.values()), 2),
             },
         })
@@ -893,6 +1098,9 @@ class X12Parser:
                 subscriber_hl = entry
             elif lc == "23" and patient_hl is None:
                 patient_hl = entry
+
+        # ── Variant detection (837P vs 837I vs 837D) ────────────────────────
+        variant_info = self._detect_837_variant(ts)
 
         # In the detected loop structure, NM1 is often a separate loop leader that
         # immediately follows its associated HL loop. We scan loops sequentially
@@ -1080,7 +1288,11 @@ class X12Parser:
             "patient_name": patient_name,
             "bht_id": bht_id,
             "bht_date": bht_date,
-            # New hierarchy and claims fields
+            # Variant detection
+            "variant": variant_info["variant"],
+            "variant_indicator": variant_info["indicator"],
+            "service_line_type": variant_info["service_line_type"],
+            # Hierarchy and claims fields
             "hierarchy": hierarchy,
             "claims": claims,
         }

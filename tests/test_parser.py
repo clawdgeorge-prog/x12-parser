@@ -730,6 +730,101 @@ class Test835Reconciliation:
         assert summary["plb_summary"]["total_plb_adjustment"] == 0.0
 
 
+class Test837VariantDetection:
+    """837 variant (professional/institutional/dental) detection."""
+
+    def test_837_professional_variant(self):
+        fixture = FIXTURES / "sample_837_prof.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["variant"] == "professional"
+        assert summary["variant_indicator"] == "P"
+        assert summary["service_line_type"] == "professional"
+
+    def test_837_institutional_variant(self):
+        fixture = FIXTURES / "sample_837_institutional.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["variant"] == "institutional"
+        assert summary["variant_indicator"] == "I"
+        assert summary["service_line_type"] == "institutional"
+
+    def test_837_dental_variant(self):
+        fixture = FIXTURES / "sample_837_dental.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["variant"] == "dental"
+        assert summary["variant_indicator"] == "D"
+        assert summary["service_line_type"] == "dental"
+
+
+class Test835Enrichment:
+    """835 BPR and CLP status enrichment."""
+
+    def test_bpr_payment_method_extracted(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert "bpr_payment_method" in summary
+        # sample_835.edi has BPR*H (ACH)
+        assert summary["bpr_payment_method"] == "H"
+
+    def test_bpr_payment_method_label(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["bpr_payment_method"] == "H"
+        assert summary["bpr_payment_method_label"] == "ACH"
+
+    def test_clp_status_labels(self):
+        fixture = FIXTURES / "sample_835.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        for cl in summary["claims"]:
+            assert "status_label" in cl
+            assert "status_category" in cl
+            assert cl["status_label"] != ""
+            assert cl["status_category"] in {"paid", "pended", "denied", "forwarded", "informational", "unknown"}
+
+    def test_discrepancy_fixture_detects_billed_mismatch(self):
+        """sample_835_discrepancy.edi: CLP billed=1000, SVC billed=250 → mismatch."""
+        fixture = FIXTURES / "sample_835_discrepancy.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        assert summary["total_billed_amount"] == 1800.0
+        assert len(summary["discrepancies"]) == 1
+        assert summary["discrepancies"][0]["type"] == "billed_mismatch"
+        assert summary["discrepancies"][0]["claim_id"] == "CLP001"
+        assert summary["discrepancies"][0]["difference"] == 750.0
+
+    def test_discrepancy_fixture_clp002_no_mismatch(self):
+        fixture = FIXTURES / "sample_835_discrepancy.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        clp002 = next(c for c in ts["summary"]["claims"] if c["claim_id"] == "CLP002")
+        assert not clp002["has_billed_discrepancy"]
+        assert clp002["svc_billed"] == 800.0
+
+    def test_plb_adjustment_labels(self):
+        fixture = FIXTURES / "sample_835_rich.edi"
+        data = X12Parser.from_file(fixture).to_dict()
+        ts = data["interchanges"][0]["functional_groups"][0]["transactions"][0]
+        summary = ts["summary"]
+        plb_summary = summary["plb_summary"]
+        assert "adjustment_labels" in plb_summary
+        assert "CV" in plb_summary["adjustment_labels"]
+        assert "WO" in plb_summary["adjustment_labels"]
+        assert plb_summary["adjustment_labels"]["CV"] == "Covered"
+        assert plb_summary["adjustment_labels"]["WO"] == "Write-Off"
+
+
 if __name__ == "__main__":
 
     import pytest
