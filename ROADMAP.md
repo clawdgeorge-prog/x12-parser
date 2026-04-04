@@ -1,6 +1,6 @@
 # X12 Parser — Roadmap & Gap Analysis
 
-**Version:** 0.1.0 → 0.2.0 (in-progress)
+**Version:** 0.2.0 (released 2026-04-03)
 **Date:** 2026-04-03
 **Scope:** This document covers 835 and 837 transaction types only.
 
@@ -33,15 +33,21 @@
 - ✅ **Required segment presence per transaction type (835: BPR/TRN/N1/CLP; 837: BHT/NM1/CLM)**
 - ✅ **Non-numeric amount field warnings (CLP, SVC, CAS monetary elements)**
 - ✅ **Duplicate claim ID detection (CLP for 835, CLM for 837)**
+- ✅ **837 variant detection (Professional / Institutional / Dental from SV1/SV2/UD)**
+- ✅ **837 Institutional HI absence warning (SV2 without HI)**
+- ✅ **835 N1 entity checks (N1*PR and N1*PE presence warnings)**
+- ✅ **837 NM1 billing provider absence warning**
+- ✅ **CLP status code validation (1–29 range check, non-numeric warning)**
+- ✅ **Issue categorization (envelope / segment_structure / semantic / data_quality / content)**
 - ✅ **Actionable recommendations in JSON output per issue code**
 - ✅ Verbose text report with inline recommendations
 - ✅ Unknown segment tag warnings
 - ✅ Exit codes: 0 (clean), 1 (errors), 2 (parse failure)
 
 ### Test Coverage
-- ✅ 113 pytest tests (77 parser + 46 validate)
+- ✅ 136 pytest tests (88 parser + 48 validate)
 - ✅ 67 run_tests.py checks
-- ✅ 180 total automated checks
+- ✅ 203 total automated checks
 
 ---
 

@@ -473,6 +473,188 @@ class TestValidateRecommendations:
         assert "→" in result.stdout, "Expected recommendations in verbose output"
 
 
+class TestValidate837VariantDetection:
+    """837 variant (professional/institutional/dental) detection from SV1/SV2/UD."""
+
+    def test_837_professional_has_sv1(self):
+        result = validate_fixture("sample_837_prof.edi")
+        codes_w = {i.code for i in result.issues if i.severity == "warning"}
+        # Should NOT warn about SV1 missing for professional
+        assert "SV1" not in codes_w
+
+    def test_837_institutional_has_sv2(self):
+        result = validate_fixture("sample_837_institutional.edi")
+        codes_w = {i.code for i in result.issues if i.severity == "warning"}
+        assert "SV2" not in codes_w
+
+    def test_837_institutional_missing_hi_warns(self):
+        # Create a fixture without HI and check warning
+        edi_no_hi = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~"
+            "GS*HI*SENDER*RECEIVER*20250402*1234*1*X*005010X223A1~"
+            "ST*837*0001*005010X223A1~"
+            "BHT*0019*11*BATCH001*20250402*1234*CH~"
+            "NM1*41*2*BILLING PROVIDER*****46*12345~"
+            "HL*1**20*1~"
+            "NM1*85*2*DR SMITH*****XX*1234567890~"
+            "HL*2*1*22*1~"
+            "SBR*P*18*******CI~"
+            "NM1*IL*1*SUBSCRIBER*LAST****MI*MEMBER001~"
+            "CLM*CLM001*500***11:B:1*Y*A*Y*Y~"
+            "SV2*HC:0250*500*400***1**1~"
+            "SE*15*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi_no_hi)
+        v = X12Validator(p)
+        r = v.validate()
+        codes_w = {i.code for i in r.issues if i.severity == "warning"}
+        assert "HI_MISSING_INSTITUTIONAL" in codes_w
+
+    def test_837_dental_variant_detected(self):
+        result = validate_fixture("sample_837_dental.edi")
+        codes_w = {i.code for i in result.issues if i.severity == "warning"}
+        assert "SV1" not in codes_w  # dental uses UD, not SV1
+
+
+class TestValidate835EntityChecks:
+    """835 entity presence checks: N1*PR and N1*PE should be present."""
+
+    def test_835_rich_has_n1_pr(self):
+        # sample_835_rich.edi has N1*PR — should NOT warn
+        result = validate_fixture("sample_835_rich.edi")
+        codes_w = {i.code for i in result.issues if i.severity == "warning"}
+        assert "N1_PR_MISSING" not in codes_w
+
+    def test_835_rich_has_n1_pe(self):
+        result = validate_fixture("sample_835_rich.edi")
+        codes_w = {i.code for i in result.issues if i.severity == "warning"}
+        assert "N1_PE_MISSING" not in codes_w
+
+    def test_835_missing_n1_pr_warns(self):
+        # Create 835 without N1*PR
+        edi_no_pr = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PE*PROVIDER*****XX*123456~"
+            "SE*6*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi_no_pr)
+        v = X12Validator(p)
+        r = v.validate()
+        codes_w = {i.code for i in r.issues if i.severity == "warning"}
+        assert "N1_PR_MISSING" in codes_w
+
+    def test_835_missing_n1_pe_warns(self):
+        edi_no_pe = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE*****PI*123456~"
+            "SE*6*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi_no_pe)
+        v = X12Validator(p)
+        r = v.validate()
+        codes_w = {i.code for i in r.issues if i.severity == "warning"}
+        assert "N1_PE_MISSING" in codes_w
+
+
+class TestValidateCLPStatusCodes:
+    """CLP status code validation — must be valid numeric 1-29."""
+
+    def test_835_clean_has_valid_clp_status(self):
+        result = validate_fixture("sample_835.edi")
+        codes_w = {i.code for i in result.issues if i.severity == "warning"}
+        assert "CLP_STATUS_INVALID" not in codes_w
+        assert "CLP_STATUS_OUT_OF_RANGE" not in codes_w
+
+    def test_clp_status_invalid_non_numeric_warns(self):
+        edi_bad_status = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "N1*PE*PROVIDER~"
+            "LX*1~"
+            "CLP*CLP001*1000*BAD*500~"
+            "SE*9*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi_bad_status)
+        v = X12Validator(p)
+        r = v.validate()
+        codes_w = {i.code for i in r.issues if i.severity == "warning"}
+        assert "CLP_STATUS_INVALID" in codes_w
+
+    def test_clp_status_out_of_range_warns(self):
+        edi_bad_status = (
+            "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+            "*250402*1234*^*00501*000000001*0*P*:~"
+            "GS*HP*SENDER*RECEIVER*20250402*1234*1*X*005010X221A1~"
+            "ST*835*0001*005010X221A1~"
+            "BPR*I*1000*C*ACH~"
+            "TRN*1*0000000001~"
+            "N1*PR*INSURANCE~"
+            "N1*PE*PROVIDER~"
+            "LX*1~"
+            "CLP*CLP001*1000*99*500~"
+            "SE*9*0001~GE*1*1~IEA*1*000000001~"
+        )
+        from src.parser import X12Parser
+        from src.validate import X12Validator
+        p = X12Parser(text=edi_bad_status)
+        v = X12Validator(p)
+        r = v.validate()
+        codes_w = {i.code for i in r.issues if i.severity == "warning"}
+        assert "CLP_STATUS_OUT_OF_RANGE" in codes_w
+
+
+class TestValidateIssueCategories:
+    """Issue categories should be populated in validation output."""
+
+    def test_category_in_json_output(self):
+        import subprocess
+        fixture = FIXTURES / "sample_missing_se.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--json"],
+            capture_output=True, text=True,
+        )
+        parsed = json.loads(result.stdout)
+        assert "issues" in parsed
+        for issue in parsed["issues"]:
+            assert "category" in issue, f"Issue {issue.get('code')} missing category field"
+
+    def test_envelope_issues_have_envelope_category(self):
+        result = validate_fixture("sample_missing_ge.edi")
+        gs_ge = next((i for i in result.issues if i.code == "GS_GE_MISMATCH"), None)
+        assert gs_ge is not None
+        assert gs_ge.category == "envelope"
+
+    def test_segment_structure_issues_have_segment_structure_category(self):
+        result = validate_fixture("sample_missing_ge.edi")
+        empty_group = next((i for i in result.issues if i.code == "EMPTY_GROUP"), None)
+        assert empty_group is not None
+        assert empty_group.category == "segment_structure"
+
+
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))

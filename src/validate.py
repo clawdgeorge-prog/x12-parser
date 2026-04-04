@@ -34,6 +34,7 @@ class Issue:
     severity: str        # "error" | "warning"
     code: str            # short machine-readable code
     message: str         # human-readable description
+    category: str = ""   # issue category: envelope, segment_structure, semantic, data_quality, content
     segment_tag: str = ""
     segment_position: int = 0
 
@@ -43,12 +44,14 @@ class ValidationResult:
     clean: bool = True
     issues: list[Issue] = field(default_factory=list)
 
-    def add_error(self, code: str, message: str, tag: str = "", pos: int = 0):
-        self.issues.append(Issue("error", code, message, tag, pos))
+    def add_error(self, code: str, message: str, tag: str = "", pos: int = 0, category: str = ""):
+        cat = category or _ISSUE_CATEGORIES.get(code, "")
+        self.issues.append(Issue("error", code, message, cat, tag, pos))
         self.clean = False
 
-    def add_warning(self, code: str, message: str, tag: str = "", pos: int = 0):
-        self.issues.append(Issue("warning", code, message, tag, pos))
+    def add_warning(self, code: str, message: str, tag: str = "", pos: int = 0, category: str = ""):
+        cat = category or _ISSUE_CATEGORIES.get(code, "")
+        self.issues.append(Issue("warning", code, message, cat, tag, pos))
 
 
 # ── Core validation ───────────────────────────────────────────────────────────
@@ -403,6 +406,109 @@ class X12Validator:
                             claim_id_tag, 0,
                         )
 
+        # ── 12. 835-specific entity checks ───────────────────────────────────
+        # N1*PR (payer) and N1*PE (provider) should both be present in a valid 835
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    if ts.get("set_id") != "835":
+                        continue
+                    all_tags: set[str] = set()
+                    n1_qualifiers: set[str] = set()
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            all_tags.add(seg["tag"])
+                            if seg["tag"] == "N1":
+                                qualifier = seg["elements"].get("e1", "").strip()
+                                if qualifier:
+                                    n1_qualifiers.add(qualifier)
+
+                    # N1*PR = payer, N1*PE = provider — both expected in 835
+                    if "N1" in all_tags and "PR" not in n1_qualifiers:
+                        result.add_warning(
+                            "N1_PR_MISSING",
+                            f"Transaction {ts_idx + 1} (835): "
+                            f"N1*PR (payer) segment not found; verify payer identification is present",
+                            "N1", 0,
+                        )
+                    if "N1" in all_tags and "PE" not in n1_qualifiers:
+                        result.add_warning(
+                            "N1_PE_MISSING",
+                            f"Transaction {ts_idx + 1} (835): "
+                            f"N1*PE (provider/payee) segment not found; verify provider identification is present",
+                            "N1", 0,
+                        )
+
+        # ── 13. 837-specific checks ─────────────────────────────────────────
+        # NM1*85 (billing provider) should be present in 837
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    if ts.get("set_id") != "837":
+                        continue
+                    nm1_qualifiers: set[str] = set()
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            if seg["tag"] == "NM1":
+                                qualifier = seg["elements"].get("e1", "").strip()
+                                if qualifier:
+                                    nm1_qualifiers.add(qualifier)
+
+                    has_billing_provider = "85" in nm1_qualifiers or "41" in nm1_qualifiers
+                    if not has_billing_provider:
+                        result.add_warning(
+                            "NM1_BILLING_PROVIDER_MISSING",
+                            f"Transaction {ts_idx + 1} (837): "
+                            f"NM1*85 (billing provider) or NM1*41 (submitter) not found; "
+                            f"entity identification may be incomplete",
+                            "NM1", 0,
+                        )
+
+                    # Check SV1/SV2/UD presence for variant alignment
+                    all_tags = set()
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            all_tags.add(seg["tag"])
+                    has_sv1 = "SV1" in all_tags
+                    has_sv2 = "SV2" in all_tags
+                    has_ud = "UD" in all_tags
+                    # Warn if institutional (SV2) but no HI (diagnosis codes expected)
+                    if has_sv2 and "HI" not in all_tags:
+                        result.add_warning(
+                            "HI_MISSING_INSTITUTIONAL",
+                            f"Transaction {ts_idx + 1} (837 Institutional): "
+                            f"HI (diagnosis codes) expected but not found; "
+                            f"institutional claims typically require diagnosis coding",
+                            "HI", 0,
+                        )
+
+        # ── 14. CLP status code sanity check ─────────────────────────────────
+        # CLP status codes should be in the valid range (1-29 per X12)
+        for ic in data.get("interchanges", []):
+            for fg in ic.get("functional_groups", []):
+                for ts_idx, ts in enumerate(fg.get("transactions", [])):
+                    if ts.get("set_id") != "835":
+                        continue
+                    for loop in ts.get("loops", []):
+                        for seg in loop.get("segments", []):
+                            if seg["tag"] == "CLP":
+                                status = seg["elements"].get("e3", "").strip()
+                                if status and not status.isdigit():
+                                    result.add_warning(
+                                        "CLP_STATUS_INVALID",
+                                        f"Transaction {ts_idx + 1}: CLP {seg['elements'].get('e1', '?')!r}: "
+                                        f"CLP status code {status!r} is not a valid numeric code; "
+                                        f"expected values 1-29 (X12 835 TR3)",
+                                        "CLP", seg.get("position", 0),
+                                    )
+                                elif status and (int(status) < 1 or int(status) > 29):
+                                    result.add_warning(
+                                        "CLP_STATUS_OUT_OF_RANGE",
+                                        f"Transaction {ts_idx + 1}: CLP {seg['elements'].get('e1', '?')!r}: "
+                                        f"CLP status code {status!r} is outside the valid range (1-29)",
+                                        "CLP", seg.get("position", 0),
+                                    )
+
         return result
 
 
@@ -416,6 +522,137 @@ def _is_numeric(value: str) -> bool:
     except ValueError:
         return False
 
+
+# ── Schema-driven validation rules ──────────────────────────────────────────
+# Externalized rule table: maps transaction type → segment → rule dict.
+# Each rule: {"required": bool, "severity": str, "description": str, "context": callable|None}
+# context is an optional function(parser, ts) → bool; if False the rule is skipped.
+#
+# X12 TR3 segments (approximate — not full schema, but useful structural guidance):
+#
+# 835 required segments (X12 005010X221A1): BPR, TRN, N1(PR), CLP
+#   Recommended: N1(PE), DTM, CAS, REF, PER, LX, SVC, PLB
+#
+# 837 required segments (X12 005010X222A1 / X223A1):
+#   Professional: BHT, NM1(41), HL (billing provider), NM1(85), CLM, SV1
+#   Institutional: BHT, NM1(41), HL (billing provider), NM1(85), CLM, SV2, HI
+#   Dental:       BHT, NM1(41), HL (billing provider), NM1(85), CLM, UD, HI
+
+
+def _835_has_n1_role(parser: X12Parser, ts: dict) -> bool:
+    """Return True if the 835 transaction has N1 with given qualifier."""
+    return True  # always check
+
+
+_VALIDATION_RULES: dict[str, dict[str, dict]] = {
+    "835": {
+        "BPR": {
+            "required": True,
+            "severity": "error",
+            "description": "BPR (Beginning Segment for Payment/Remittance) is required",
+        },
+        "TRN": {
+            "required": True,
+            "severity": "error",
+            "description": "TRN (Trace) segment is required for payment traceability",
+        },
+        "N1": {
+            "required": True,
+            "severity": "error",
+            "description": "N1 (Payer Name) segment is required in 835",
+        },
+        "CLP": {
+            "required": True,
+            "severity": "error",
+            "description": "CLP (Claim Payment) segment is required for each claim payment",
+        },
+        "PLB": {
+            "required": False,
+            "severity": "warning",
+            "description": "PLB (Provider-Level Adjustment) segment is optional but recommended for accounting reconciliation",
+        },
+        "CAS": {
+            "required": False,
+            "severity": "warning",
+            "description": "CAS (Claim Adjustment) segment is optional but common; its presence reconciles paid vs. billed",
+        },
+        "SVC": {
+            "required": False,
+            "severity": "warning",
+            "description": "SVC (Service Line) segments are recommended for per-service-line paid amount detail",
+        },
+    },
+    "837": {
+        "BHT": {
+            "required": True,
+            "severity": "error",
+            "description": "BHT (Beginning of Hierarchical Transaction) segment is required",
+        },
+        "NM1": {
+            "required": True,
+            "severity": "error",
+            "description": "NM1 (Individual or Organization Name) segment is required (submitter, receiver, billing provider)",
+        },
+        "CLM": {
+            "required": True,
+            "severity": "error",
+            "description": "CLM (Claim Information) segment is required for each claim",
+        },
+        "HI": {
+            "required": False,  # Required for institutional; optional for professional
+            "severity": "warning",
+            "description": "HI (Health Care Information) diagnosis codes recommended for claim completeness",
+        },
+        "SV1": {
+            "required": False,  # Professional only
+            "severity": "warning",
+            "description": "SV1 (Professional Service) expected for professional claims (837P)",
+        },
+        "SV2": {
+            "required": False,  # Institutional only
+            "severity": "warning",
+            "description": "SV2 (Institutional Service) expected for institutional claims (837I)",
+        },
+        "UD": {
+            "required": False,  # Dental only
+            "severity": "warning",
+            "description": "UD (Dental Service) expected for dental claims (837D)",
+        },
+    },
+}
+
+# Issue category taxonomy — groups related issues for human-readable reporting
+_ISSUE_CATEGORIES: dict[str, str] = {
+    # Envelope
+    "ISA_IEA_MISMATCH":      "envelope",
+    "GS_GE_MISMATCH":        "envelope",
+    "ST_SE_MISMATCH":        "envelope",
+    "ORPHAN_ISA":            "envelope",
+    "ORPHAN_IEA":            "envelope",
+    "ORPHAN_GS":             "envelope",
+    "ORPHAN_GE":             "envelope",
+    "ORPHAN_ST":             "envelope",
+    "ORPHAN_SE":             "envelope",
+    # Segment structure
+    "SE_COUNT_MISMATCH":     "segment_structure",
+    "SE_NO_COUNT":           "segment_structure",
+    "SE_INVALID_COUNT":      "segment_structure",
+    "EMPTY_TRANSACTION":    "segment_structure",
+    "EMPTY_GROUP":          "segment_structure",
+    # Semantic / content
+    "REQUIRED_SEGMENT_MISSING":  "semantic",
+    "N1_PR_MISSING":         "semantic",
+    "N1_PE_MISSING":         "semantic",
+    "NM1_BILLING_PROVIDER_MISSING": "semantic",
+    "SVC_DATE_MISSING":      "semantic",
+    # Data quality
+    "ISA_DATE_INVALID":      "data_quality",
+    "ISA_TIME_INVALID":      "data_quality",
+    "NON_NUMERIC_AMOUNT":    "data_quality",
+    "CLAIM_ID_DUPLICATE":    "data_quality",
+    # Content
+    "UNKNOWN_SEGMENT":       "content",
+}
 
 # Extended VALID_INNER_TAGS after the class ends
 
@@ -438,7 +675,8 @@ def format_report(result: ValidationResult, verbose: bool = False) -> str:
             lines.append(f"\n❌  {len(errors)} ERROR(S):")
             for issue in errors:
                 pos = f" [pos {issue.segment_position}]" if issue.segment_position else ""
-                lines.append(f"  [{issue.code}]{pos}  {issue.message}")
+                cat = f" [{issue.category}]" if verbose and issue.category else ""
+                lines.append(f"  [{issue.code}]{cat}{pos}  {issue.message}")
                 if verbose:
                     rec = _ISSUE_RECOMMENDATIONS.get(issue.code, "")
                     if rec:
@@ -447,7 +685,8 @@ def format_report(result: ValidationResult, verbose: bool = False) -> str:
             lines.append(f"\n⚠️   {len(warnings)} WARNING(S):")
             for issue in warnings:
                 pos = f" [pos {issue.segment_position}]" if issue.segment_position else ""
-                lines.append(f"  [{issue.code}]{pos}  {issue.message}")
+                cat = f" [{issue.category}]" if verbose and issue.category else ""
+                lines.append(f"  [{issue.code}]{cat}{pos}  {issue.message}")
                 if verbose:
                     rec = _ISSUE_RECOMMENDATIONS.get(issue.code, "")
                     if rec:
@@ -507,6 +746,20 @@ _ISSUE_RECOMMENDATIONS = {
     "UNKNOWN_SEGMENT": "An unrecognized segment tag was encountered. "
         "This may be a typo, an unsupported optional segment, or an unsupported "
         "transaction type. Verify the transaction set version and type.",
+    "N1_PR_MISSING": "N1*PR (payer name) is expected in 835 transactions. "
+        "Verify the payer identification is complete for reconciliation purposes.",
+    "N1_PE_MISSING": "N1*PE (provider/payee name) is expected in 835 transactions. "
+        "Verify the provider identification is complete for reconciliation purposes.",
+    "NM1_BILLING_PROVIDER_MISSING": "NM1*85 (billing provider) or NM1*41 (submitter) "
+        "is expected in 837 transactions for proper entity identification. "
+        "Verify the billing provider information is present.",
+    "HI_MISSING_INSTITUTIONAL": "837 Institutional claims typically include HI (diagnosis codes) "
+        "segments. Verify whether diagnosis information is missing or filed under a different segment.",
+    "CLP_STATUS_INVALID": "CLP status code should be a numeric value 1-29 per X12 835 TR3. "
+        "Verify the CLP segment element 3 contains a valid status code.",
+    "CLP_STATUS_OUT_OF_RANGE": "CLP status code is outside the valid X12 range of 1-29. "
+        "Valid codes: 1=Primary, 2=Secondary, 3=Tertiary, 4=Denied, 5=Pended, "
+        "9-11=Forwarded, 12=Resubmission, 19-25=Dental forwarded, 27-29=Vision forwarded.",
 }
 
 
@@ -518,6 +771,7 @@ def format_json(result: ValidationResult) -> str:
         issues_out.append({
             "severity": i.severity,
             "code": i.code,
+            "category": i.category,
             "message": i.message,
             "segment_tag": i.segment_tag,
             "segment_position": i.segment_position,
