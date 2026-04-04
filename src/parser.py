@@ -930,8 +930,8 @@ class X12Parser:
                                 current_claim["adjustment_group_codes"].add(grp_code)
                             # CAS elements: e1=group_code, e2=reason1, e3=amount1, e4=reason2, e5=amount2...
                             # Amounts are at odd 1-indexed positions: e3, e5, e7...
-                            for e_idx in range(3, min(len(seg.elements), 19), 2):
-                                raw = self._seg_get(seg, e_idx + 1)
+                            for e_idx in range(3, min(len(seg.elements) + 1, 19), 2):
+                                raw = self._seg_get(seg, e_idx)
                                 if raw:
                                     try:
                                         adj = float(raw)
@@ -1156,8 +1156,8 @@ class X12Parser:
             for seg in sum([l.segments for l in ts.loops if l.leader_tag == "CAS"], []):
                 if seg.tag == "CAS":
                     grp = self._seg_get(seg, 2) or "?"
-                    for e_idx in range(3, min(len(seg.elements), 19), 2):
-                        raw = self._seg_get(seg, e_idx + 1)
+                    for e_idx in range(3, min(len(seg.elements) + 1, 19), 2):
+                        raw = self._seg_get(seg, e_idx)
                         if raw:
                             try:
                                 cas_by_group[grp] = cas_by_group.get(grp, 0.0) + float(raw)

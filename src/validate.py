@@ -178,7 +178,7 @@ class X12Validator:
         VALID_INNER_TAGS = frozenset((
             "BPR", "TRN", "DTM", "N1", "N3", "N4", "REF", "LX", "CLP", "CAS",
             "NM1", "SVC", "ADJ", "DTP", "BHT", "HL", "PER", "SBR", "HI",
-            "SV1", "SV2", "SV3", "SV4", "SV5", "DMG", "AMT", "QTY", "CTP",
+            "SV1", "SV2", "SV3", "SV4", "SV5", "SV6", "UD", "DMG", "AMT", "QTY", "CTP",
             "HCP", "CUR", "NTE", "PAT", "LIN", "CR1", "CR2", "CR3", "CR4",
             "CR5", "RDM", "PLB", "RMR", "ENT", "NME", "NX1", "K1",
             "CLM", "BPR", "LQ", "F9", "N2", "G93", "TS2", "TS3", "MIA", "MOA",
