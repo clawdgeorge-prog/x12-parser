@@ -1,8 +1,8 @@
 """
 X12 Parser — Healthcare EDI 835/837 transactions.
 
-Scope (v0.2.0):
-  - ISA/IEA envelope parsing
+Scope (v0.2.1):
+  - ISA/IEA envelope parsing with **dynamic delimiter extraction**
   - GS/GE functional-group envelope
   - ST/SE transaction set framing
   - 835: Healthcare Claim Payment/Advice
@@ -16,7 +16,7 @@ Scope (v0.2.0):
 Known limitations (documented in README):
   - No schema validation against official X12 specs
   - Composite elements returned as strings (not decomposed)
-  - Repetition separator (ISA-11) treated as space
+  - Repetition separator (ISA-11) extracted but not used for segment parsing
 """
 
 from __future__ import annotations
@@ -286,6 +286,26 @@ _PLB_REASON_CODES: dict[str, dict] = {
 }
 
 # Kind inference from leader tag / code
+# Reconciliation discrepancy taxonomy — describes what kind of mismatch was found
+_DISCREPANCY_TAXONOMY = {
+    "billed_mismatch": {
+        "severity": "warning",
+        "description": "CLP billed amount differs from sum of SVC billed amounts",
+    },
+    "paid_mismatch": {
+        "severity": "warning",
+        "description": "CLP paid amount differs from sum of SVC paid amounts",
+    },
+    "zero_pay_inconsistency": {
+        "severity": "warning",
+        "description": "CLP status indicates denied/pending but service lines show non-zero payment",
+    },
+    "cas_adjustment_mismatch": {
+        "severity": "info",
+        "description": "Sum of CAS adjustments does not equal the reported CLP adjustment amount",
+    },
+}
+
 _LOOP_KINDS = {
     # NM1 entity type codes → kind
     "QC": "entity",    # patient/claimant
@@ -531,30 +551,70 @@ class X12Parser:
         text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
         return cls(text=text)
 
-    def _detect_delimiters(self, text: str) -> tuple[str, str, str]:
-        """Detect delimiters from ISA segment."""
-        isa_match = re.search(r"ISA[^\r\n]*", text)
-        if not isa_match:
-            return DEFAULT_ELEM_SEP, DEFAULT_COMP_SEP, DEFAULT_SEG_TERM
-        isa = isa_match.group()
-        # Fixed-width ISA format: element separator is at position 3 (ISA-3),
-        # component separator at position 82 (ISA-16). Standard X12 files use
-        # * as element sep, : as component sep, ~ as segment terminator.
-        # For robustness we hardcode the standard delimiters for v0.1.0.
-        elem = "*"
-        comp = ":"
-        seg_t = "~"
-        return elem, comp, seg_t
+    def _detect_delimiters(self, text: str) -> tuple[str, str, str, str]:
+        """Detect delimiters from ISA segment.
+        
+        Extracts:
+        - Element separator (ISA-3)
+        - Component separator (ISA-16)
+        - Repetition separator (ISA-11) - extracted but not used
+        - Segment terminator
+        
+        Returns (elem_sep, comp_sep, rep_sep, seg_term).
+        """
+        # Find ISA segment (up to ~ or newline)
+        isa_full_match = re.search(r"ISA[^\r\n~]*", text)
+        if not isa_full_match:
+            return DEFAULT_ELEM_SEP, DEFAULT_COMP_SEP, "^", DEFAULT_SEG_TERM
+            
+        isa = isa_full_match.group()
+        
+        # Defaults per X12 spec
+        elem_sep = "*"
+        comp_sep = ":"
+        rep_sep = "^"
+        seg_term = "~"
+        
+        # Element separator is at position 3 (after ISA)
+        if len(isa) > 3:
+            candidate = isa[3]
+            if candidate and candidate != " ":
+                elem_sep = candidate
+        
+        # Component separator is at end of ISA (last char before ~ or end)
+        if isa.endswith("~"):
+            comp_sep = isa[-2]
+        elif len(isa) > 3:
+            # Find last element separator and get char after it
+            last_sep = isa.rfind(elem_sep)
+            if last_sep >= 0 and last_sep + 1 < len(isa):
+                potential = isa[last_sep + 1]
+                if potential and potential != " ":
+                    comp_sep = potential
+        
+        # Repetition separator (ISA-11) - element 11 (1-indexed)
+        try:
+            parts = isa.split(elem_sep)
+            if len(parts) > 11:
+                rep = parts[11].strip()
+                if rep and len(rep) == 1:
+                    rep_sep = rep
+        except Exception:
+            pass  # keep default
+        
+        return elem_sep, comp_sep, rep_sep, seg_term
 
     def _parse(self) -> None:
         text = self._raw_text
         if not text.strip():
             return
 
-        elem_sep, comp_sep, seg_term = self._detect_delimiters(text)
+        elem_sep, comp_sep, rep_sep, seg_term = self._detect_delimiters(text)
         tokenizer = X12Tokenizer(seg_term=seg_term, elem_sep=elem_sep)
         raw_segs = tokenizer.tokenize(text)
 
+        # Update segment parser with detected element separator
+        self._seg_parser = X12SegmentParser(elem_sep=elem_sep)
         self.segments = [
             self._seg_parser.parse(raw=s, position=i + 1)
             for i, s in enumerate(raw_segs)

@@ -37,6 +37,59 @@ class TestTokenizer:
         assert segs == ["ST*835*0001", "SE*15*0001", "IEA*1*000001"]
 
 
+class TestDelimiterDetection:
+    """Tests for dynamic delimiter extraction from ISA segment."""
+
+    def test_standard_delimiters_detected(self):
+        """Standard *:^~ delimiters should be detected from ISA."""
+        p = X12Parser(text="")
+        text = "ISA*00*          *00*          *ZZ*SUBMITTER     *ZZ*RECEIVER      *250402*1522*^*00501*000000001*0*P*:~GS*HP*SUBMITTER*RECEIVER*20250402*1522*1*X*005010X221A1~"
+        elem, comp, rep, seg = p._detect_delimiters(text)
+        assert elem == "*"
+        assert comp == ":"
+        assert rep == "^"
+        assert seg == "~"
+
+    def test_alternative_delimiters_detected(self):
+        """Alternative +> delimiters should be detected from ISA."""
+        p = X12Parser(text="")
+        text = "ISA+00+          +00+          +ZZ+SENDER       +ZZ+RECEIVER       +250402+1522+^+00501+000000001+0+P+>~GS+HP+SENDER+RECEIVER+20250402+1522+1+X+005010X221A1~"
+        elem, comp, rep, seg = p._detect_delimiters(text)
+        assert elem == "+"
+        assert comp == ">"
+        assert rep == "^"
+        assert seg == "~"
+
+    def test_no_isa_returns_defaults(self):
+        """No ISA segment should return defaults."""
+        p = X12Parser(text="")
+        elem, comp, rep, seg = p._detect_delimiters("ST*835*0001~SE*15*0001~")
+        assert elem == "*"
+        assert comp == ":"
+        assert rep == "^"
+        assert seg == "~"
+
+    def test_alt_delimiter_file_parses_correctly(self):
+        """File with alternative delimiters should parse correctly."""
+        p = parse_file(str(FIXTURES / "sample_835_alt_delimiters.edi"))
+        assert len(p.segments) == 17
+        assert len(p.interchanges) == 1
+        # ST segment should be properly parsed
+        st = p.segments[2]
+        assert st.tag == "ST"
+        assert st.elements[0].raw == "835"
+        assert st.elements[1].raw == "0001"
+
+    def test_standard_delimiter_file_still_works(self):
+        """Standard delimiter file should still parse correctly."""
+        p = parse_file(str(FIXTURES / "sample_835.edi"))
+        assert len(p.segments) == 34
+        assert len(p.interchanges) == 1
+        st = p.segments[2]
+        assert st.tag == "ST"
+        assert st.elements[0].raw == "835"
+
+
 # ── Segment parser tests ───────────────────────────────────────────────────────
 
 class TestSegmentParser:
