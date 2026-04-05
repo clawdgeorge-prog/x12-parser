@@ -103,31 +103,31 @@ python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
 X12 STRUCTURAL VALIDATION REPORT
 ============================================================
 
-❌  1 ERROR(S):
-  [SE_COUNT_MISMATCH] [pos 32]  Transaction 1: SE declares 28
-  segments, but found 30 (positions 3–32)
+✅  No structural errors found.
 
 ============================================================
-Result: ERRORS FOUND
+Result: CLEAN
 ============================================================
 ```
 
-> The SE count mismatch is a known data quirk in the sample fixture —
-> `validate.py` is working correctly by detecting it.
+> This built-in fixture now serves as a clean structural demo case. For examples of public files that still produce bounded warnings or sample-quality issues, see the curated external sample docs and reports.
 
 ### Parse 837 — key fields extracted
 
 ```
-↳ Interchange sender:  SUBMITTER
-↳ Interchange receiver: RECEIVER
+↳ Interchange sender:  BILLINGAGENCY
+↳ Interchange receiver: PAYERBLUE
 ↳ Transaction type:     837
-↳ Loops found:          12
-  - 4 loop(s) of kind: entity
-  - 3 loop(s) of kind: hierarchy
-  - 2 loop(s) of kind: claim
-  - 1 loop(s) of kind: service
-  - 1 loop(s) of kind: diagnosis
+↳ Loops found:          18
   - 1 loop(s) of kind: header
+  - 6 loop(s) of kind: entity
+  - 1 loop(s) of kind: contact
+  - 2 loop(s) of kind: hierarchy
+  - 1 loop(s) of kind: reference
+  - 1 loop(s) of kind: demographic
+  - 1 loop(s) of kind: claim
+  - 1 loop(s) of kind: diagnosis
+  - 4 loop(s) of kind: service
 ```
 
 ### Validate clean fixture

@@ -2,9 +2,8 @@
 X12 STRUCTURAL VALIDATION REPORT
 ============================================================
 
-❌  1 ERROR(S):
-  [SE_COUNT_MISMATCH] [pos 32]  Transaction 1: SE declares 28 segments, but found 30 (positions 3–32)
+✅  No structural errors found.
 
 ============================================================
-Result: ERRORS FOUND
+Result: CLEAN
 ============================================================
