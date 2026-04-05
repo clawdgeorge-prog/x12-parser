@@ -31,9 +31,13 @@ python3 -m src.validate external-test-files/hdi_837p_all_fields.dat
 # External 837 Institutional sample (HDI)
 python3 -m src.cli external-test-files/hdi_837i_all_fields.dat --summary
 python3 -m src.validate external-test-files/hdi_837i_all_fields.dat
+
+# Fragment / ST-SE-only samples
+python3 -m src.validate external-test-files/jobisez_sample_835.edi --mode fragment-aware
+python3 -m src.validate external-test-files/hdi_837_multi_tran.dat --mode fragment-aware
 ```
 
-> These external samples are useful compatibility references, not guarantees of universal payer compatibility. The external 837I sample still carries an `SE_COUNT_MISMATCH` that currently appears to be a source-file/data-quality issue rather than a parser bug.
+> These external samples are useful compatibility references, not guarantees of universal payer compatibility. The external 837I sample still carries an `SE_COUNT_MISMATCH` that currently appears to be a source-file/data-quality issue rather than a parser bug. For ST/SE-only or partial-envelope files, use `--mode fragment-aware` instead of pretending they are full production interchanges.
 
 ```bash
 # From the project root
@@ -58,8 +62,11 @@ python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact
 # Summarize 837 → human-readable summary (includes HL hierarchy)
 python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
 
-# Validate a clean fixture
+# Validate a clean fixture (strict/default mode)
 python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi
+
+# Validate a fragment sample intentionally
+python3 -m src.validate external-test-files/jobisez_sample_835.edi --mode fragment-aware
 
 # Export 835 → CSV (claims, service lines, entities)
 python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
@@ -236,6 +243,8 @@ Each `elements` dict maps `e{N}` (1-based) to its raw string value.
 - `external-test-results/external_835_test_summary.json` — machine-generated external 835 run summary
 - `external-test-results/external_837_test_summary.json` — machine-generated external 837 run summary
 - `EXTERNAL_835_COMPATIBILITY_REPORT.md` — current external compatibility posture and caveats
+- `EXTERNAL_SAMPLE_TAXONOMY.md` — sample classes (full-envelope vs fragment vs coverage/stress)
+- `ROOT_CAUSE_ANALYSIS_EXTERNAL_SAMPLES.md` — why specific external warnings/errors are sample-driven vs tool-driven
 
 ## Pre-generated outputs
 

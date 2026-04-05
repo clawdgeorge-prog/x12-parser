@@ -164,7 +164,7 @@ Structural validation checks include:
 - **Optional companion-guide / payer rule packs** via `--rules <pack.json>` for bounded trading-partner checks
 
 ```bash
-# Human-readable report
+# Human-readable report (default / strict envelope mode)
 python3 -m src.validate tests/fixtures/sample_835.edi
 
 # With actionable recommendations
@@ -172,6 +172,11 @@ python3 -m src.validate tests/fixtures/sample_835.edi --verbose
 
 # JSON report with recommendations
 python3 -m src.validate tests/fixtures/sample_835.edi --json -o report.json
+
+# Fragment-aware mode for ST/SE-only or partial-envelope samples
+python3 -m src.validate external-test-files/jobisez_sample_835.edi \
+  --mode fragment-aware \
+  --json
 
 # Apply an optional JSON payer-rule pack
 python3 -m src.validate tests/fixtures/sample_835_rich.edi \
@@ -181,6 +186,10 @@ python3 -m src.validate tests/fixtures/sample_835_rich.edi \
 # Write report to file
 python3 -m src.validate tests/fixtures/sample_835.edi -o report.txt
 ```
+
+Validation modes:
+- `default` / `strict` — full envelope enforcement for normal production X12 files
+- `fragment-aware` — bounded mode for partial or transaction-fragment samples; suppresses envelope-fragment noise like `ORPHAN_ST` and `ISA_IEA_MISMATCH`, while still enforcing transaction-level checks such as `SE_COUNT_MISMATCH`, `EMPTY_TRANSACTION`, and required segments inside transactions
 
 These checks are intentionally **bounded operational checks**, not full TR3/SNIP certification. They are meant to catch common structural and data-quality problems while keeping support-boundary claims honest.
 
@@ -270,9 +279,11 @@ X12 Parser is a **parser and structural checker**, not a full X12 validator:
 
 **External/public 835 samples:** The parser has been tested against public 835 examples (e.g., HDI Healthcare sample with TS2, TS3, MIA, MOA style optional segments and the Jobisez bare-ST example). Segments like TS2/TS3/MIA/MOA are now tolerated and preserved in the loop structure but are not yet fully semanticized — they are treated as known-optional segments rather than claiming complete field-level support.
 
-**External/public 837 samples:** The parser has also been tested against public HDI 837P and 837I examples. Bounded recognition now covers support segments such as PRV, CL1, PWK, OI, and SVD so they do not create misleading unknown-segment noise in otherwise valid external files. This is still bounded support, not full field-level semantic coverage.
+**External/public 837 samples:** The parser has also been tested against public HDI 837P and 837I examples. Bounded recognition now covers support segments such as PRV, CL1, PWK, OI, SVD, MEA, PS1, and FRM so they do not create misleading unknown-segment noise in otherwise valid external files. This is still bounded support, not full field-level semantic coverage.
 
-See `EXTERNAL_835_COMPATIBILITY_REPORT.md` for the current external-sample matrix and support posture.
+**Fragment-aware validation mode:** Public sample files often appear as ST/SE-only fragments or partial envelopes. The validator now supports `--mode fragment-aware` for those cases. This mode suppresses envelope-fragment errors (such as `ORPHAN_ST` and `ISA_IEA_MISMATCH`) without pretending the sample is a complete production interchange.
+
+See `EXTERNAL_835_COMPATIBILITY_REPORT.md`, `EXTERNAL_SAMPLE_TAXONOMY.md`, and `ROOT_CAUSE_ANALYSIS_EXTERNAL_SAMPLES.md` for the current external-sample matrix and support posture.
 
 **Large files** have not been stress-tested beyond the synthetic 835 benchmark/fixture work documented in the repo.
 
