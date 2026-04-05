@@ -5,8 +5,17 @@ X12 Structural Validator — CLI for envelope and structural integrity checks.
 Validates ISA/IEA, GS/GE, ST/SE pairing; orphan segments; empty
 transactions/groups; and SE segment-count signals.
 
+Two validation modes:
+  default/strict  — Full envelope enforcement: expects complete ISA/IEA, GS/GE, ST/SE structure.
+                   Suitable for production X12 files with complete envelopes.
+  fragment-aware — Permissive mode for partial files or transaction fragments (e.g., ST/SE-only
+                   samples). Suppresses envelope-pairing errors (ORPHAN_*, MISMATCH)
+                   but still validates inner structural integrity (SE count, empty transactions,
+                   required segments within transactions).
+
 Usage:
     python3 -m src.validate <input.edi> [--json] [-o <report.json>]
+    python3 -m src.validate <input.edi> --mode fragment-aware
 
 Exit codes:
     0 — clean (no structural errors found)
@@ -20,7 +29,9 @@ import json
 import sys
 import pathlib
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Literal
+
+ValidationMode = Literal["default", "strict", "fragment-aware"]
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
@@ -64,10 +75,26 @@ class X12Validator:
     Checks envelope pairing (ISA/IEA, GS/GE, ST/SE), orphan segments,
     empty groups/transactions, and SE segment-count signals.
     Does NOT perform schema/segment-order validation.
+
+    Supports two modes:
+      - "default" or "strict": Full envelope enforcement (production X12 files)
+      - "fragment-aware": Permissive mode for partial/stub files with partial envelopes
     """
 
-    def __init__(self, parser: X12Parser):
+    def __init__(self, parser: X12Parser, mode: ValidationMode = "default"):
         self.parser = parser
+        self.mode = mode
+        self._is_fragment_mode = mode == "fragment-aware"
+
+    def _add_envelope_error(self, result: ValidationResult, code: str, message: str, tag: str = "", pos: int = 0):
+        """Add envelope-related error, skipping in fragment-aware mode."""
+        if not self._is_fragment_mode:
+            result.add_error(code, message, tag, pos)
+
+    def _add_envelope_warning(self, result: ValidationResult, code: str, message: str, tag: str = "", pos: int = 0):
+        """Add envelope-related warning, skipping in fragment-aware mode."""
+        if not self._is_fragment_mode:
+            result.add_warning(code, message, tag, pos)
 
     def validate(self) -> ValidationResult:
         result = ValidationResult()
@@ -78,7 +105,8 @@ class X12Validator:
         isa_count = sum(1 for s in raw_segs if s.tag == "ISA")
         iea_count = sum(1 for s in raw_segs if s.tag == "IEA")
         if isa_count != iea_count:
-            result.add_error(
+            self._add_envelope_error(
+                result,
                 "ISA_IEA_MISMATCH",
                 f"ISA count ({isa_count}) != IEA count ({iea_count}); "
                 f"each interchange requires exactly one ISA and one IEA",
@@ -101,7 +129,8 @@ class X12Validator:
                 <= (ic.get("trailer", {}).get("position", 999999))
             )
             if gs_count != ge_count:
-                result.add_error(
+                self._add_envelope_error(
+                    result,
                     "GS_GE_MISMATCH",
                     f"Interchange {ic_idx + 1}: GS count ({gs_count}) != GE count ({ge_count})",
                 )
@@ -122,7 +151,8 @@ class X12Validator:
                     and fg_start_pos <= s.position <= fg_end_pos
                 )
                 if st_count != se_count:
-                    result.add_error(
+                    self._add_envelope_error(
+                        result,
                         "ST_SE_MISMATCH",
                         f"Functional group {fg_idx + 1} (IC {ic.get('header', {}).get('position', '?')}): "
                         f"ST count ({st_count}) != SE count ({se_count})",
@@ -158,7 +188,8 @@ class X12Validator:
                     if gs_pos < s.position < ge_pos
                 )
                 if not has_st:
-                    result.add_warning(
+                    self._add_envelope_warning(
+                        result,
                         "EMPTY_GROUP",
                         f"Functional group {fg_idx + 1} (GS at position {gs_pos}): "
                         f"no ST/SE transaction sets found between GS and GE",
@@ -196,34 +227,63 @@ class X12Validator:
                 # Multiple ISA/IEA interchanges are valid — only error if ISA appears
                 # while we are already inside an open interchange (unclosed ISA).
                 if in_interchange:
-                    result.add_error("ORPHAN_ISA", f"ISA segment at position {seg.position} "
-                                    "appears while a prior interchange has not been closed with IEA",
-                                    seg.tag, seg.position)
+                    self._add_envelope_error(
+                        result,
+                        "ORPHAN_ISA",
+                        f"ISA segment at position {seg.position} "
+                        f"appears while a prior interchange has not been closed with IEA",
+                        seg.tag, seg.position,
+                    )
                 in_interchange = True
             elif seg.tag == "IEA":
                 if not in_interchange:
-                    result.add_error("ORPHAN_IEA", f"Orphan IEA at position {seg.position} "
-                                    "(no preceding ISA)", seg.tag, seg.position)
+                    self._add_envelope_error(
+                        result,
+                        "ORPHAN_IEA",
+                        f"Orphan IEA at position {seg.position} "
+                        f"(no preceding ISA)",
+                        seg.tag, seg.position,
+                    )
                 in_interchange = False
             elif seg.tag == "GS":
                 if not in_interchange:
-                    result.add_error("ORPHAN_GS", f"Orphan GS at position {seg.position} "
-                                    "(outside any ISA/IEA pair)", seg.tag, seg.position)
+                    self._add_envelope_error(
+                        result,
+                        "ORPHAN_GS",
+                        f"Orphan GS at position {seg.position} "
+                        f"(outside any ISA/IEA pair)",
+                        seg.tag, seg.position,
+                    )
                 in_group = True
             elif seg.tag == "GE":
                 if not in_group:
-                    result.add_error("ORPHAN_GE", f"Orphan GE at position {seg.position} "
-                                    "(no preceding GS)", seg.tag, seg.position)
+                    self._add_envelope_error(
+                        result,
+                        "ORPHAN_GE",
+                        f"Orphan GE at position {seg.position} "
+                        f"(no preceding GS)",
+                        seg.tag, seg.position,
+                    )
                 in_group = False
             elif seg.tag == "ST":
                 if not in_group:
-                    result.add_error("ORPHAN_ST", f"Orphan ST at position {seg.position} "
-                                    "(outside any GS/GE pair)", seg.tag, seg.position)
+                    self._add_envelope_error(
+                        result,
+                        "ORPHAN_ST",
+                        f"Orphan ST at position {seg.position} "
+                        f"(outside any GS/GE pair)",
+                        seg.tag, seg.position,
+                    )
                 in_transaction = True
             elif seg.tag == "SE":
                 if not in_transaction:
-                    result.add_error("ORPHAN_SE", f"Orphan SE at position {seg.position} "
-                                    "(no preceding ST)", seg.tag, seg.position)
+                    self._add_envelope_error(
+                        result,
+                        "ORPHAN_SE",
+                        f"Orphan SE at position {seg.position} "
+                        f"(no preceding ST)",
+                        seg.tag, seg.position,
+                    )
                 in_transaction = False
             elif seg.tag not in VALID_INNER_TAGS:
                 # Unknown segment tag — may be a typo or unsupported segment
@@ -912,6 +972,15 @@ def main() -> None:
     )
     parser.add_argument("file", type=pathlib.Path, help="Input X12 EDI file")
     parser.add_argument("-o", "--output", type=pathlib.Path, help="Write report to file")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["default", "strict", "fragment-aware"],
+        default="default",
+        help="Validation mode: 'default'/'strict' = full envelope enforcement (production X12 files). "
+        "'fragment-aware' = permissive mode for partial/stub files; suppresses envelope-related "
+        "errors (ORPHAN_*, MISMATCH) but still validates inner structural integrity.",
+    )
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--compact", action="store_true", help="Compact JSON (no indent)")
     parser.add_argument("--verbose", action="store_true", help="Show warnings in text report")
@@ -931,7 +1000,7 @@ def main() -> None:
         print(f"ERROR: could not parse {args.file}: {exc}", file=sys.stderr)
         sys.exit(2)
 
-    validator = X12Validator(x12)
+    validator = X12Validator(x12, mode=args.mode)
     result = validator.validate()
 
     if args.rules:

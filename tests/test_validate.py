@@ -766,3 +766,87 @@ class TestValidate835BalancingChecks:
 if __name__ == "__main__":
     import pytest
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ── Fragment-aware mode tests ────────────────────────────────────────────
+
+class TestFragmentAwareMode:
+    """Fragment-aware mode should suppress envelope errors but keep inner checks."""
+
+    def test_fragment_mode_ignores_orphan_st(self):
+        """ORPHAN_ST should be suppressed in fragment-aware mode."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(FIXTURES / "sample_835.edi")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        orphan_errors = [i for i in result.issues if i.code == "ORPHAN_ST"]
+        assert orphan_errors == []
+
+    def test_fragment_mode_suppresses_isa_iea_mismatch(self):
+        """ISA_IEA_MISMATCH should be suppressed in fragment-aware mode."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(FIXTURES / "sample_missing_iea.edi")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        mismatch_errors = [i for i in result.issues if i.code == "ISA_IEA_MISMATCH"]
+        assert mismatch_errors == []
+
+    def test_fragment_mode_suppresses_gs_ge_mismatch(self):
+        """GS_GE_MISMATCH should be suppressed in fragment-aware mode."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(FIXTURES / "sample_missing_ge.edi")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        mismatch_errors = [i for i in result.issues if i.code == "GS_GE_MISMATCH"]
+        assert mismatch_errors == []
+
+    def test_fragment_mode_catches_real_errors(self):
+        """Fragment-aware mode should still catch SE_COUNT_MISMATCH."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(FIXTURES / "sample_se_count_wrong.edi")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        count_errors = [i for i in result.issues if i.code == "SE_COUNT_MISMATCH"]
+        assert len(count_errors) == 1
+
+    def test_fragment_mode_catches_empty_transaction(self):
+        """Fragment-aware mode should still catch EMPTY_TRANSACTION."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(FIXTURES / "sample_empty_transaction.edi")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        empty_errors = [i for i in result.issues if i.code == "EMPTY_TRANSACTION"]
+        assert len(empty_errors) == 1
+
+
+class TestFragmentAwareExternalFiles:
+    """Fragment-aware mode should clean up external fragment files."""
+    # External files are in repo root, two levels up from tests/
+    EXTERNAL_FIXTURES = pathlib.Path(__file__).parent.parent / "external-test-files"
+
+    def test_jobisez_fragment_clean(self):
+        """jobisez_sample_835.edi should be clean in fragment-aware mode."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(self.EXTERNAL_FIXTURES / "jobisez_sample_835.edi")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        errors = {i.code for i in result.issues if i.severity == "error"}
+        assert errors == set(), f"Expected no errors in fragment mode, got: {errors}"
+
+    def test_hdi_837_multi_tran_fragment_clean(self):
+        """hdi_837_multi_tran.dat should be clean in fragment-aware mode."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(self.EXTERNAL_FIXTURES / "hdi_837_multi_tran.dat")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        errors = {i.code for i in result.issues if i.severity == "error"}
+        assert errors == set(), f"Expected no errors in fragment mode, got: {errors}"
+
+    def test_hdi_837_commercial_fragment_clean(self):
+        """hdi_837_commercial.dat should be clean in fragment-aware mode."""
+        from src.validate import X12Validator
+        parser = X12Parser.from_file(self.EXTERNAL_FIXTURES / "hdi_837_commercial.dat")
+        validator = X12Validator(parser, mode="fragment-aware")
+        result = validator.validate()
+        errors = {i.code for i in result.issues if i.severity == "error"}
+        assert errors == set(), f"Expected no errors in fragment mode, got: {errors}"
