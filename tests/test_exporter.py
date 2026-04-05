@@ -304,3 +304,52 @@ class TestExporterEdgeCases:
                     exporter.write_sqlite_bundle(data, out)
             except Exception as exc:
                 raise AssertionError(f"Fixture {fname} failed export: {exc}") from exc
+
+
+# ── Analytics bundle tests ───────────────────────────────────────────────────
+
+class TestAnalyticsBundle:
+    def test_analytics_bundle_writes_expected_files(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            counts = exporter.write_analytics_bundle(data, out)
+            assert set(counts.keys()) == {
+                "claims_analytics_835.csv",
+                "claims_analytics_837.csv",
+                "reconciliation_835.csv",
+                "service_lines_analytics.csv",
+            }
+            assert (out / "claims_analytics_835.csv").exists()
+            assert counts["claims_analytics_835.csv"] == 4
+
+    def test_835_analytics_contains_enriched_fields(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        rows = list(exporter._build_835_analytics_records(data))
+        assert rows
+        row = rows[0]
+        assert "cas_adjustments_by_group_json" in row
+        assert "payment_match_key" in row
+        assert "estimated_unpaid_amount" in row
+        assert row["payment_match_key"].startswith("CLP")
+
+    def test_835_analytics_estimated_unpaid_amount(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        rows = list(exporter._build_835_analytics_records(data))
+        clp001 = next(r for r in rows if r["claim_id"] == "CLP001")
+        assert clp001["estimated_unpaid_amount"] == "150.00"
+
+    def test_837_analytics_contains_hierarchy_ids(self):
+        data = _parse_fixture("sample_837_prof_rich.edi")
+        rows = list(exporter._build_837_analytics_records(data))
+        assert rows
+        row = rows[0]
+        assert "billing_provider_hl_id" in row
+        assert "subscriber_hl_id" in row
+        assert "patient_hl_id" in row
+
+    def test_reconciliation_export_has_status_column(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        rows = list(exporter._build_835_reconciliation_records(data))
+        assert rows
+        assert all("reconciliation_status" in row for row in rows)

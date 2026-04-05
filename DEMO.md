@@ -4,10 +4,13 @@
 
 1. **Parse** an 835 EDI file → structured JSON
 2. **Validate** an 835 EDI file → structural report
-3. **Parse** an 837 EDI file → structured JSON
-4. **Validate** a clean fixture → clean pass
-5. **Summarize** an 835 or 837 file → human-readable summary (money amounts, claim counts, discrepancies)
-6. **Export** → CSV, NDJSON, or SQLite-ready normalized CSV bundle
+3. **Explain** findings → explainable validation v2 JSON grouped by envelope level
+4. **Preflight** a file → rejection-risk summary with score + weighted factors
+5. **Parse** an 837 EDI file → structured JSON
+6. **Validate** a clean fixture → clean pass
+7. **Summarize** an 835 or 837 file → human-readable summary (money amounts, claim counts, discrepancies)
+8. **Export** → CSV, NDJSON, SQLite-ready normalized bundle, or analytics bundle
+9. **Reconcile** → compare 835 claims against a reference CSV
 
 > Note: 837 Dental is included only as a bounded scaffold/demo case. Variant detection works, but dental-specific semantics are not yet deep enough to treat it as full production-grade support.
 
@@ -56,6 +59,12 @@ python3 -m src.cli tests/fixtures/sample_835.edi --summary
 # Validate 835 → structural report
 python3 -m src.validate tests/fixtures/sample_835.edi
 
+# Explain validation findings → grouped explainable validation v2 JSON
+python3 -m src.validate tests/fixtures/sample_missing_ge.edi --explain
+
+# Preflight submission risk → rejection-risk summary JSON
+python3 -m src.validate tests/fixtures/sample_missing_ge.edi --preflight
+
 # Parse 837 → JSON (compact)
 python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact
 
@@ -76,6 +85,14 @@ python3 -m src.cli tests/fixtures/sample_835.edi --format ndjson
 
 # Export 835 → SQLite bundle (normalized CSVs + schema.sql)
 python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
+
+# Export 835 → analytics bundle (enriched claim facts + reconciliation-ready rows)
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
+
+# Reconcile 835 → compare against a reference claim list
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format reconcile \
+  --reference-csv reference_claims.csv \
+  -o reconcile/
 ```
 
 ---
@@ -111,6 +128,39 @@ Result: CLEAN
 ```
 
 > This built-in fixture now serves as a clean structural demo case. For examples of public files that still produce bounded warnings or sample-quality issues, see the curated external sample docs and reports.
+
+### Explainable validation v2 — grouped machine output
+
+```json
+{
+  "schema_version": "1.0",
+  "explanation_version": "2.0",
+  "clean": false,
+  "sections": {
+    "interchange": [],
+    "functional_group": [
+      {
+        "code": "GS_GE_MISMATCH",
+        "x12_location": "file",
+        "recommendation": "Each functional group must have matching GS and GE counts. Check that the GE trailer count matches the GS count."
+      }
+    ],
+    "transaction": []
+  }
+}
+```
+
+### Preflight — rejection-risk summary
+
+```json
+{
+  "schema_version": "1.0",
+  "rejection_risk_score": 71,
+  "rejection_risk_level": "high",
+  "blocking_issue_count": 1,
+  "top_codes": ["GS_GE_MISMATCH", "EMPTY_GROUP"]
+}
+```
 
 ### Parse 837 — key fields extracted
 
@@ -169,7 +219,8 @@ The parser emits nested JSON:
 
 ```json
 {
-  "version": "0.1.0",
+  "version": "0.2.1",
+  "schema_version": "1.0",
   "interchanges": [
     {
       "header": { "tag": "ISA", "elements": { "e1": "00", ... }, "raw": "ISA*00*..." },
@@ -253,3 +304,12 @@ Each `elements` dict maps `e{N}` (1-based) to its raw string value.
 | `sample_835_parsed.json` | Pre-generated compact JSON for `sample_835.edi` |
 | `sample_835_validate.txt` | Validation report for `sample_835.edi` (shows error) |
 | `sample_ws_validate.txt`  | Validation report for the whitespace-irregular fixture (clean) |
+
+## Recommended first workflow
+
+For a new user, this sequence usually gives the best signal quickly:
+
+1. `python3 -m src.cli <file> --summary`
+2. `python3 -m src.validate <file> --verbose`
+3. `python3 -m src.cli <file> --format analytics -o analytics/`
+4. `python3 -m src.cli <file> --format reconcile --reference-csv expected.csv -o reconcile/` (if you have an expected-claims list)

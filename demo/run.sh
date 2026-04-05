@@ -41,9 +41,19 @@ echo "    Command: python3 -m src.validate tests/fixtures/sample_835.edi"
 echo ""
 python3 -m src.validate tests/fixtures/sample_835.edi || true
 echo ""
-echo "    Note: validate.py correctly detected an SE segment count mismatch"
-echo "          in the sample fixture — this is a data quality issue in the"
-echo "          fixture, not a parser bug."
+
+# ── 2b. Explainable validation v2 ─────────────────────────────
+echo ">>> 2b. EXPLAIN  (grouped explainable validation v2)"
+echo "    Command: python3 -m src.validate tests/fixtures/sample_missing_ge.edi --explain"
+echo ""
+python3 -m src.validate tests/fixtures/sample_missing_ge.edi --explain || true
+echo ""
+
+# ── 2c. Preflight rejection-risk summary ──────────────────────
+echo ">>> 2c. PREFLIGHT  (rejection-risk summary)"
+echo "    Command: python3 -m src.validate tests/fixtures/sample_missing_ge.edi --preflight"
+echo ""
+python3 -m src.validate tests/fixtures/sample_missing_ge.edi --preflight || true
 echo ""
 
 # ── 3. Parse an 837 file ───────────────────────────────────────
@@ -69,11 +79,35 @@ for k, v in loops_by_kind.items():
 "
 echo ""
 
-# ── 4. Validate a clean fixture ───────────────────────────────
-echo ">>> 4. VALIDATE  (clean fixture — no structural errors)"
+# ── 4. Forensic analysis ───────────────────────────────────
+echo ">>> 4. FORENSIC  (deep claim tracing + unusual pattern detection)"
+echo "    Command: python3 -m src.validate tests/fixtures/sample_835.edi --forensic"
+echo ""
+python3 -m src.validate tests/fixtures/sample_835.edi --forensic
+echo ""
+
+# ── 5. Payer rules + transparent rules trace ─────────────────
+echo ">>> 5. PAYER RULES + RULES TRACE  (companion-guide pack with transparent trace)"
+echo "    Command: python3 -m src.validate tests/fixtures/sample_837_institutional.edi ..."
+echo "             --rules examples/rules/medicare-837i-companion.sample.json --rules-trace"
+echo ""
+python3 -m src.validate tests/fixtures/sample_837_institutional.edi \
+    --rules examples/rules/medicare-837i-companion.sample.json --rules-trace || true
+echo ""
+
+# ── 6. Validate a clean fixture ───────────────────────────────
+echo ">>> 6. VALIDATE  (clean fixture — no structural errors)"
 echo "    Command: python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi"
 echo ""
 python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi
+echo ""
+
+# ── 7. Analytics export ───────────────────────────────────────
+echo ">>> 7. ANALYTICS EXPORT  (835 rich fixture → analytics bundle)"
+echo "    Command: python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o demo/analytics_out"
+echo ""
+rm -rf demo/analytics_out
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o demo/analytics_out
 echo ""
 
 echo "============================================================"

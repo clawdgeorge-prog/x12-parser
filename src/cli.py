@@ -2,17 +2,21 @@
 """
 X12 Parse CLI — parse 835/837 files and emit structured output.
 
-Supports three output formats:
+Supports output formats:
   json    — full nested JSON (default)
   ndjson  — newline-delimited JSON (one record per line)
   csv     — flat CSV files (claims, service lines, entities)
   sqlite  — normalized CSV bundle + schema.sql ready for SQLite import
+  analytics — analytics-oriented CSV bundle for BI / reconciliation
+  reconcile — 835 reconciliation bundle / JSON report
 
 Usage:
     python3 -m src.cli <input.edi> [-o <output.json>]
     python3 -m src.cli <input.edi> --format ndjson
     python3 -m src.cli <input.edi> --format csv -o output_dir/
     python3 -m src.cli <input.edi> --format sqlite -o output_dir/
+    python3 -m src.cli <input.edi> --format analytics -o analytics_dir/
+    python3 -m src.cli <input.edi> --format reconcile --reference-csv expected_claims.csv -o reconcile_dir/
     python3 -m src.cli <input.edi> --summary
 
 Examples:
@@ -21,6 +25,7 @@ Examples:
     python3 -m src.cli tests/fixtures/sample_835.edi --format ndjson
     python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
     python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
+    python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
     python3 -m src.cli tests/fixtures/sample_835.edi --compact
     python3 -m src.cli tests/fixtures/sample_835.edi --summary
     python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
@@ -28,12 +33,14 @@ Examples:
 from __future__ import annotations
 import argparse
 import json
+import sys
 from pathlib import Path
 
 # Add project root to path
 
 from src.parser import X12Parser
 from src import exporter
+from src.reconcile import read_reference_claims_csv, reconcile_data, write_reconciliation_bundle
 
 
 def _fmt_money(v) -> str:
@@ -211,9 +218,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "ndjson", "csv", "sqlite"],
+        choices=["json", "ndjson", "csv", "sqlite", "analytics", "reconcile"],
         default="json",
-        help="Output format: json (default), ndjson, csv, or sqlite",
+        help="Output format: json (default), ndjson, csv, sqlite, analytics, or reconcile",
+    )
+    parser.add_argument(
+        "--reference-csv",
+        type=Path,
+        help="Optional reference claims CSV for reconciliation mode (claim_id required; expected_paid optional)",
     )
     args = parser.parse_args()
 
@@ -277,6 +289,33 @@ def main() -> None:
         for fname, cnt in sorted(counts.items()):
             print(f"[OK] {fname}: {cnt} records")
         print(f"Total: {total} records across {len(counts)} files in {out_dir}/")
+
+    elif args.format == "analytics":
+        out_dir = args.output or Path(".")
+        if not args.output:
+            out_dir = Path(".")
+        counts = exporter.write_analytics_bundle(data, out_dir)
+        total = sum(counts.values())
+        for fname, cnt in sorted(counts.items()):
+            print(f"[OK] {fname}: {cnt} records")
+        print(f"Total: {total} records across {len(counts)} files in {out_dir}/")
+
+    elif args.format == "reconcile":
+        reference_claims = []
+        if args.reference_csv:
+            if not args.reference_csv.exists():
+                print(f"ERROR: reference CSV not found: {args.reference_csv}", file=sys.stderr)
+                sys.exit(1)
+            reference_claims = read_reference_claims_csv(args.reference_csv)
+        result = reconcile_data(data, reference_claims=reference_claims)
+        if args.output:
+            counts = write_reconciliation_bundle(result, args.output)
+            total = sum(counts.values())
+            for fname, cnt in sorted(counts.items()):
+                print(f"[OK] {fname}: {cnt} records")
+            print(f"Total: {total} records across {len(counts)} files in {args.output}/")
+        else:
+            print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

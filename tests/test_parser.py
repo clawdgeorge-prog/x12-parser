@@ -1020,6 +1020,14 @@ class Test835Balancing:
         assert zero_pay[0]["severity"] == "info"
 
 
+class TestStableOutputContract:
+    def test_to_dict_includes_schema_version(self):
+        data = X12Parser.from_file(FIXTURES / "sample_835.edi").to_dict()
+        assert data["schema_version"] == "1.0"
+        assert "version" in data
+        assert "interchanges" in data
+
+
 if __name__ == "__main__":
 
     import pytest

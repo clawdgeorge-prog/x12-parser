@@ -241,6 +241,8 @@ class TestValidateJSONOutput:
         parsed = json.loads(result.stdout)
         assert parsed["clean"] is True
         assert parsed["error_count"] == 0
+        assert parsed["schema_version"] == "1.0"
+        assert parsed["explanation_version"] == "2.0"
 
     def test_json_missing_se_has_error(self):
         import subprocess
@@ -471,6 +473,94 @@ class TestValidateRecommendations:
         )
         # Verbose output should contain recommendation arrow
         assert "→" in result.stdout, "Expected recommendations in verbose output"
+
+
+class TestExplainableValidationV2:
+    def test_explain_output_groups_by_section(self):
+        import subprocess
+        fixture = FIXTURES / "sample_missing_ge.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--explain"],
+            capture_output=True, text=True,
+        )
+        parsed = json.loads(result.stdout)
+        assert parsed["schema_version"] == "1.0"
+        assert parsed["explanation_version"] == "2.0"
+        assert "sections" in parsed
+        assert "functional_group" in parsed["sections"]
+
+    def test_explain_output_includes_x12_location(self):
+        import subprocess
+        fixture = FIXTURES / "sample_missing_se.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--explain"],
+            capture_output=True, text=True,
+        )
+        parsed = json.loads(result.stdout)
+        flat = [item for section in parsed["sections"].values() for item in section]
+        assert any("x12_location" in item for item in flat)
+
+
+class TestPreflightSummaries:
+    def test_preflight_output_contains_risk_summary(self):
+        import subprocess
+        fixture = FIXTURES / "sample_missing_ge.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--preflight"],
+            capture_output=True, text=True,
+        )
+        parsed = json.loads(result.stdout)
+        assert "rejection_risk_score" in parsed
+        assert "rejection_risk_level" in parsed
+        assert parsed["rejection_risk_score"] >= 1
+        assert parsed["blocking_issue_count"] >= 1
+
+    def test_preflight_clean_fixture_is_minimal_or_low(self):
+        import subprocess
+        fixture = FIXTURES / "sample_835.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--preflight"],
+            capture_output=True, text=True,
+        )
+        parsed = json.loads(result.stdout)
+        assert parsed["rejection_risk_level"] in {"minimal", "low", "medium", "high"}
+        assert parsed["schema_version"] == "1.0"
+
+
+class TestForensicAndRuleTraceCli:
+    def test_forensic_output_contains_claim_trace(self):
+        import subprocess
+        fixture = FIXTURES / "sample_835.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.validate", str(fixture), "--forensic"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode in {0, 1}
+        assert "X12 FORENSIC ANALYSIS REPORT" in result.stdout
+        assert "CLAIM TRACES" in result.stdout
+        assert "Claim: CLP001" in result.stdout
+
+    def test_rules_trace_output_shows_match_details(self):
+        import subprocess
+        fixture = FIXTURES / "sample_837_institutional.edi"
+        rules = pathlib.Path(__file__).parent.parent / "examples" / "rules" / "medicare-837i-companion.sample.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "src.validate",
+                str(fixture),
+                "--rules",
+                str(rules),
+                "--rules-trace",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode in {0, 1}
+        assert "COMPANION-GUIDE / PAYER RULE PACK — MATCHING TRACE" in result.stdout
+        assert "Rule: 837i-hi-required" in result.stdout
+        assert "Segment:  HI" in result.stdout
 
 
 class TestValidate837VariantDetection:

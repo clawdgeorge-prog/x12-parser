@@ -22,6 +22,7 @@ Known limitations (documented in README):
 from __future__ import annotations
 
 __version__ = "0.2.1"
+OUTPUT_SCHEMA_VERSION = "1.0"
 
 import re
 import json
@@ -889,13 +890,29 @@ class X12Parser:
 
                 clp_seg = loop.segments[0] if loop.segments else None
                 clp_id = self._seg_get(clp_seg, 1) or "?"
-                clp_status = self._seg_get(clp_seg, 3) or "?"
-                try:
-                    clp_billed = float(self._seg_get(clp_seg, 2) or "0")
-                    clp_paid = float(self._seg_get(clp_seg, 4) or "0")
-                    clp_allowed = float(self._seg_get(clp_seg, 5) or "0")
-                except ValueError:
-                    clp_billed = clp_paid = clp_allowed = 0.0
+
+                def _first_numeric(*indexes: int) -> float:
+                    for idx in indexes:
+                        raw = self._seg_get(clp_seg, idx)
+                        if raw not in (None, ""):
+                            try:
+                                return float(raw)
+                            except ValueError:
+                                continue
+                    return 0.0
+
+                def _first_value(*indexes: int) -> str:
+                    for idx in indexes:
+                        raw = self._seg_get(clp_seg, idx)
+                        if raw not in (None, ""):
+                            return raw
+                    return "?"
+
+                # Support both simplified internal fixtures and richer external-style 835 CLP layouts.
+                clp_status = _first_value(3, 6)
+                clp_billed = _first_numeric(2, 5)
+                clp_paid = _first_numeric(4, 7)
+                clp_allowed = _first_numeric(5, 7)
 
                 current_claim = {
                     "claim_id": clp_id,
@@ -1508,6 +1525,7 @@ class X12Parser:
         self._parse_summary()
         return {
             "version": __version__,
+            "schema_version": OUTPUT_SCHEMA_VERSION,
             "interchanges": [
                 {
                     "header": _segment_to_dict(ic.header),

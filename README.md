@@ -5,7 +5,11 @@
 ```
 python3 -m src.cli  sample.edi                  # → JSON
 python3 -m src.cli  sample.edi --summary        # → human-readable summary
+python3 -m src.cli  sample.edi --format analytics -o out/analytics
+python3 -m src.cli  sample.edi --format reconcile --reference-csv claims.csv -o out/reconcile
 python3 -m src.validate sample.edi               # → structural report
+python3 -m src.validate sample.edi --explain     # → explainable validation v2 JSON
+python3 -m src.validate sample.edi --preflight   # → rejection-risk summary JSON
 python3 -m src.validate sample.edi --rules examples/rules/premier-835-companion.sample.json
 ```
 
@@ -28,6 +32,10 @@ python3 -m src.validate tests/fixtures/sample_835.edi
 # Run the full demo (4 commands, auto-summarised output)
 ./demo/run.sh
 ```
+
+If you are new to the project, also read:
+- `QUICKSTART.md` — shortest path from raw file to useful output
+- `WORKFLOWS.md` — what the workflow-oriented features do and when to use them
 
 ### Python API
 
@@ -64,6 +72,21 @@ ISA/IEA (interchange) → GS/GE (functional group) → ST/SE (transaction set) a
 
 Common 835 and 837 segments are detected and preserved with raw element extraction. Key segments include BPR, TRN, N1, NM1, CLP, SVC, CAS, HI, CLM, SV1, SV2, and many other common segments in the included fixtures.
 
+### Explainable validation v2 + stable contracts
+
+Validation JSON now carries a stable contract with:
+- `schema_version: "1.0"`
+- `explanation_version: "2.0"`
+- per-issue `x12_location` for easier downstream debugging
+
+New validator modes:
+- `--explain` groups issues into `interchange`, `functional_group`, and `transaction` sections
+- `--preflight` produces a bounded rejection-risk summary with `rejection_risk_score`, `rejection_risk_level`, weighted factors, and top issue codes
+- `--forensic` produces a deep research/debugging report for messy or suspicious files
+- `--rules-trace` shows how companion-guide / payer-rule checks were evaluated
+
+These outputs are intended for pipelines, QA gates, and submission-readiness review. They are bounded operational signals, not a guarantee of payer acceptance.
+
 ### Transaction summaries
 
 Each parsed transaction includes a `summary` block with computed fields:
@@ -95,9 +118,11 @@ The `plb_summary` block provides `adjustment_by_code` (PLB reason code → total
 
 JSON with nested envelopes, functional groups, transaction sets, loops, and per-transaction summaries. Each segment carries its raw `elements` dict (`e1`, `e2`, …) for downstream use.
 
+Top-level parser output now includes `schema_version` so downstream consumers can pin to a stable contract.
+
 ### Export modes
 
-Four output formats are available via `--format`:
+Six output formats are available via `--format`:
 
 **`json` (default)** — full nested JSON. Every envelope, group, transaction, loop, and segment is represented. Intended for full structure inspection and API use.
 
@@ -111,7 +136,11 @@ Four output formats are available via `--format`:
 
 **`sqlite`** — a normalized SQLite-ready export bundle. Writes all CSV files above plus three additional envelope-level CSVs (`interchanges.csv`, `functional_groups.csv`, `transactions.csv`), a `schema.sql` with `CREATE TABLE` statements, and an `IMPORT_GUIDE.txt` with copy-pasteable SQLite import commands.
 
-All monetary fields in CSV/SQLite exports are expressed as plain decimal strings (e.g. `"250.00"`) to match SQLite's real affinity. `null`/missing values are written as empty strings, which SQLite imports as blank (use `NULLIF(col,'')` in queries if you need `NULL` handling).
+**`analytics`** — an analytics-oriented CSV bundle. Writes enriched 835 and 837 claim fact tables, a claim-level 835 reconciliation extract, and analytics-friendly service-line rows.
+
+**`reconcile`** — a bounded 835 reconciliation bundle. Optionally matches parsed 835 claims against a reference CSV (`claim_id` required, `expected_paid` optional) and writes matched rows, unmatched references, duplicate suspects, balance anomalies, and a summary JSON.
+
+All monetary fields in CSV/SQLite/analytics exports are expressed as plain decimal strings (e.g. `"250.00"`). `null`/missing values are written as empty strings, which SQLite imports as blank (use `NULLIF(col,'')` in queries if you need `NULL` handling).
 
 ---
 
@@ -140,6 +169,14 @@ python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
 
 # SQLite bundle — normalized CSVs + schema.sql ready for database import
 python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
+
+# Analytics bundle — enriched claim facts + reconciliation-oriented extracts
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
+
+# Reconciliation bundle — compare 835 claims against a reference CSV
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format reconcile \
+  --reference-csv reference_claims.csv \
+  -o reconcile/
 ```
 
 ### Validate mode

@@ -5,17 +5,26 @@ X12 Structural Validator — CLI for envelope and structural integrity checks.
 Validates ISA/IEA, GS/GE, ST/SE pairing; orphan segments; empty
 transactions/groups; and SE segment-count signals.
 
-Two validation modes:
+Three validation modes:
   default/strict  — Full envelope enforcement: expects complete ISA/IEA, GS/GE, ST/SE structure.
                    Suitable for production X12 files with complete envelopes.
   fragment-aware — Permissive mode for partial files or transaction fragments (e.g., ST/SE-only
                    samples). Suppresses envelope-pairing errors (ORPHAN_*, MISMATCH)
                    but still validates inner structural integrity (SE count, empty transactions,
                    required segments within transactions).
+  preflight      — Quick rejection-risk assessment: runs a targeted subset of checks and
+                   produces a risk score (0–100) with contributing factors.
+
+Two output modes:
+  default report  — Human-readable or JSON report of all issues found.
+  explain         — Structured explanation output grouped by envelope level (ISA/IC, GS/FG,
+                   ST/TS) with per-issue context, x12_location, and recommendation.
 
 Usage:
     python3 -m src.validate <input.edi> [--json] [-o <report.json>]
     python3 -m src.validate <input.edi> --mode fragment-aware
+    python3 -m src.validate <input.edi> --preflight [-o <risk.json>]
+    python3 -m src.validate <input.edi> --explain [-o <explanation.json>]
 
 Exit codes:
     0 — clean (no structural errors found)
@@ -63,6 +72,33 @@ class ValidationResult:
     def add_warning(self, code: str, message: str, tag: str = "", pos: int = 0, category: str = ""):
         cat = category or _ISSUE_CATEGORIES.get(code, "")
         self.issues.append(Issue("warning", code, message, cat, tag, pos))
+
+
+@dataclass
+class ValidationExplanation:
+    severity: str
+    code: str
+    category: str
+    message: str
+    recommendation: str
+    x12_location: str
+    envelope_level: str
+    segment_tag: str = ""
+    segment_position: int = 0
+
+
+@dataclass
+class RejectionRiskProfile:
+    schema_version: str
+    explanation_version: str
+    clean: bool
+    rejection_risk_score: int
+    rejection_risk_level: str
+    summary: str
+    blocking_issue_count: int
+    warning_issue_count: int
+    top_codes: list[str] = field(default_factory=list)
+    factors: list[dict] = field(default_factory=list)
 
 
 # ── Core validation ───────────────────────────────────────────────────────────
@@ -812,6 +848,120 @@ _ISSUE_CATEGORIES: dict[str, str] = {
 
 # Extended VALID_INNER_TAGS after the class ends
 
+VALIDATION_SCHEMA_VERSION = "1.0"
+VALIDATION_EXPLANATION_VERSION = "2.0"
+
+_RISK_WEIGHTS: dict[str, int] = {
+    "error": 25,
+    "warning": 8,
+    "envelope": 20,
+    "segment_structure": 16,
+    "semantic": 12,
+    "data_quality": 7,
+    "content": 4,
+}
+
+
+def _issue_recommendation(issue: Issue) -> str:
+    return _ISSUE_RECOMMENDATIONS.get(issue.code, "No specific recommendation available.")
+
+
+def _issue_envelope_level(issue: Issue) -> str:
+    code = issue.code
+    if code.startswith("ISA_") or code in {"ORPHAN_ISA", "ORPHAN_IEA"}:
+        return "interchange"
+    if code.startswith("GS_") or code in {"ORPHAN_GS", "ORPHAN_GE", "EMPTY_GROUP"}:
+        return "functional_group"
+    return "transaction"
+
+
+def _issue_x12_location(issue: Issue) -> str:
+    if issue.segment_tag and issue.segment_position:
+        return f"{issue.segment_tag}@{issue.segment_position}"
+    if issue.segment_tag:
+        return issue.segment_tag
+    if issue.segment_position:
+        return f"segment@{issue.segment_position}"
+    return "file"
+
+
+def build_explanations(result: ValidationResult) -> list[ValidationExplanation]:
+    explanations: list[ValidationExplanation] = []
+    for issue in result.issues:
+        explanations.append(
+            ValidationExplanation(
+                severity=issue.severity,
+                code=issue.code,
+                category=issue.category,
+                message=issue.message,
+                recommendation=_issue_recommendation(issue),
+                x12_location=_issue_x12_location(issue),
+                envelope_level=_issue_envelope_level(issue),
+                segment_tag=issue.segment_tag,
+                segment_position=issue.segment_position,
+            )
+        )
+    return explanations
+
+
+def build_preflight_profile(result: ValidationResult) -> RejectionRiskProfile:
+    score = 0
+    factors: list[dict] = []
+    top_codes: list[str] = []
+    seen_codes: set[str] = set()
+    blocking_issue_count = sum(1 for i in result.issues if i.severity == "error")
+    warning_issue_count = sum(1 for i in result.issues if i.severity == "warning")
+
+    for issue in result.issues:
+        weight = _RISK_WEIGHTS.get(issue.severity, 0) + _RISK_WEIGHTS.get(issue.category, 0)
+        if issue.code in {
+            "ISA_IEA_MISMATCH", "GS_GE_MISMATCH", "ST_SE_MISMATCH", "SE_COUNT_MISMATCH",
+            "REQUIRED_SEGMENT_MISSING", "EMPTY_TRANSACTION",
+        }:
+            weight += 10
+        score += weight
+        factors.append({
+            "code": issue.code,
+            "severity": issue.severity,
+            "category": issue.category,
+            "risk_weight": weight,
+            "message": issue.message,
+            "x12_location": _issue_x12_location(issue),
+        })
+        if issue.code not in seen_codes:
+            top_codes.append(issue.code)
+            seen_codes.add(issue.code)
+
+    score = max(0, min(100, score))
+    if score >= 70:
+        level = "high"
+    elif score >= 35:
+        level = "medium"
+    elif score > 0:
+        level = "low"
+    else:
+        level = "minimal"
+
+    if blocking_issue_count:
+        summary = f"{blocking_issue_count} blocking issue(s) likely increase rejection risk."
+    elif warning_issue_count:
+        summary = f"No blocking errors found, but {warning_issue_count} warning(s) should be reviewed before submission."
+    else:
+        summary = "No validation issues found. Rejection risk appears minimal based on bounded checks."
+
+    return RejectionRiskProfile(
+        schema_version=VALIDATION_SCHEMA_VERSION,
+        explanation_version=VALIDATION_EXPLANATION_VERSION,
+        clean=result.clean,
+        rejection_risk_score=score,
+        rejection_risk_level=level,
+        summary=summary,
+        blocking_issue_count=blocking_issue_count,
+        warning_issue_count=warning_issue_count,
+        top_codes=top_codes[:8],
+        factors=factors,
+    )
+
 
 # ── Report formatters ─────────────────────────────────────────────────────────
 
@@ -940,7 +1090,6 @@ def format_json(result: ValidationResult) -> str:
     """JSON report for machine consumption."""
     issues_out = []
     for i in result.issues:
-        rec = _ISSUE_RECOMMENDATIONS.get(i.code, "No specific recommendation available.")
         issues_out.append({
             "severity": i.severity,
             "code": i.code,
@@ -948,10 +1097,13 @@ def format_json(result: ValidationResult) -> str:
             "message": i.message,
             "segment_tag": i.segment_tag,
             "segment_position": i.segment_position,
-            "recommendation": rec,
+            "x12_location": _issue_x12_location(i),
+            "recommendation": _issue_recommendation(i),
         })
     return json.dumps(
         {
+            "schema_version": VALIDATION_SCHEMA_VERSION,
+            "explanation_version": VALIDATION_EXPLANATION_VERSION,
             "clean": result.clean,
             "issue_count": len(result.issues),
             "error_count": sum(1 for i in result.issues if i.severity == "error"),
@@ -963,7 +1115,172 @@ def format_json(result: ValidationResult) -> str:
     )
 
 
+def format_explanation_json(result: ValidationResult) -> str:
+    explanations = build_explanations(result)
+    grouped = {
+        "interchange": [],
+        "functional_group": [],
+        "transaction": [],
+    }
+    for item in explanations:
+        grouped.setdefault(item.envelope_level, []).append({
+            "severity": item.severity,
+            "code": item.code,
+            "category": item.category,
+            "message": item.message,
+            "recommendation": item.recommendation,
+            "x12_location": item.x12_location,
+            "segment_tag": item.segment_tag,
+            "segment_position": item.segment_position,
+        })
+    return json.dumps(
+        {
+            "schema_version": VALIDATION_SCHEMA_VERSION,
+            "explanation_version": VALIDATION_EXPLANATION_VERSION,
+            "clean": result.clean,
+            "issue_count": len(result.issues),
+            "sections": grouped,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+def format_preflight_json(result: ValidationResult) -> str:
+    profile = build_preflight_profile(result)
+    return json.dumps(
+        {
+            "schema_version": profile.schema_version,
+            "explanation_version": profile.explanation_version,
+            "clean": profile.clean,
+            "rejection_risk_score": profile.rejection_risk_score,
+            "rejection_risk_level": profile.rejection_risk_level,
+            "summary": profile.summary,
+            "blocking_issue_count": profile.blocking_issue_count,
+            "warning_issue_count": profile.warning_issue_count,
+            "top_codes": profile.top_codes,
+            "factors": profile.factors,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
+def _format_rules_trace(x12: X12Parser, pack) -> str:
+    """
+    Produce a transparent human-readable trace of which companion-guide rules
+    were evaluated, what values were checked, and whether each rule matched.
+    """
+    from src.payer_rules import CompanionRuleEngine
+    lines = []
+    lines.append("=" * 64)
+    lines.append("COMPANION-GUIDE / PAYER RULE PACK — MATCHING TRACE")
+    lines.append("=" * 64)
+    lines.append(f"  Rule pack:    {pack.name}")
+    lines.append(f"  Description:  {pack.description or '(none)'}")
+    lines.append(f"  Rules:        {len(pack.rules)}")
+
+    m = pack.match or {}
+    if m:
+        lines.append("\n  Match criteria:")
+        for k, v in m.items():
+            lines.append(f"    {k}: {v}")
+
+    engine = CompanionRuleEngine(x12)
+    rule_result = engine.apply_pack(pack)
+
+    lines.append(f"\n  Rules evaluated: {len(pack.rules)}")
+    lines.append(f"  Rules matched:   {len(rule_result.issues)}")
+
+    for rule in pack.rules:
+        matched, detail = _evaluate_rule(x12, rule)
+        status = "✅ MATCH" if matched else "⬜ NO MATCH"
+        lines.append(f"\n  [{status}] Rule: {rule.get('id', '?')}")
+        lines.append(f"    Segment:  {rule.get('segment', '?')}")
+        if rule.get('element'):
+            lines.append(f"    Element:  {rule.get('element', '?')}")
+        lines.append(f"    Presence: {rule.get('presence', '?')}")
+        lines.append(f"    Severity: {rule.get('severity', '?')}")
+        if detail:
+            lines.append(f"    Detail:   {detail}")
+        if rule.get('message'):
+            lines.append(f"    Message:  {rule.get('message', '?')}")
+
+    lines.append("\n" + "=" * 64)
+    return "\n".join(lines)
+
+
+def _evaluate_rule(x12: X12Parser, rule: dict) -> tuple[bool, str]:
+    """
+    Evaluate a single rule against the parsed X12 data.
+    Returns (matched: bool, detail: str) explaining what was checked.
+    """
+    seg_tag = rule.get("segment", "")
+    elem_ref = rule.get("element", "")
+    presence = rule.get("presence", "")
+    allowed_values = rule.get("in", [])
+    starts_with = rule.get("starts_with", "")
+    where_filter = rule.get("where", {})
+
+    matching_segs = []
+    for ic in x12.interchanges:
+        for fg in ic.groups:
+            for ts in fg.transactions:
+                for loop in ts.loops:
+                    for seg in loop.segments:
+                        if seg.tag == seg_tag:
+                            if where_filter:
+                                match = all(
+                                    (len(seg.elements) >= int(k[1:]) and
+                                     seg.elements[int(k[1:]) - 1].raw.strip() == v)
+                                    for k, v in where_filter.items()
+                                )
+                                if match:
+                                    matching_segs.append(seg)
+                            else:
+                                matching_segs.append(seg)
+
+    if presence == "required":
+        if not matching_segs:
+            return False, f"required segment {seg_tag!r} not found"
+        return True, f"found {seg_tag!r} at position(s) {[s.position for s in matching_segs]}"
+
+    if presence == "recommended":
+        if not matching_segs:
+            return False, f"recommended segment {seg_tag!r} not found"
+        return True, f"found {seg_tag!r} (recommended, not required)"
+
+    if presence == "forbidden":
+        if matching_segs:
+            return False, f"forbidden segment {seg_tag!r} found at position(s) {[s.position for s in matching_segs]}"
+        return True, f"{seg_tag!r} correctly absent (forbidden)"
+
+    if presence == "prohibited":
+        if matching_segs:
+            return False, f"prohibited segment {seg_tag!r} found"
+        return True, f"{seg_tag!r} correctly absent (prohibited)"
+
+    if not matching_segs:
+        return False, f"{seg_tag!r} not found; cannot check element {elem_ref!r}"
+
+    if elem_ref:
+        idx = int(elem_ref[1:])
+        for seg in matching_segs:
+            if idx >= len(seg.elements):
+                return False, f"element {elem_ref} out of range in {seg_tag} at pos {seg.position}"
+            val = seg.elements[idx].raw.strip()
+            if allowed_values:
+                if val not in allowed_values:
+                    return False, f"element {elem_ref}={val!r} not in allowed values {allowed_values}"
+            if starts_with:
+                if not val.startswith(starts_with):
+                    return False, f"element {elem_ref}={val!r} does not start with {starts_with!r}"
+        return True, f"element {elem_ref} matched for {len(matching_segs)} segment(s)"
+
+    return True, f"{seg_tag!r} present"
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -983,7 +1300,20 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--compact", action="store_true", help="Compact JSON (no indent)")
     parser.add_argument("--verbose", action="store_true", help="Show warnings in text report")
+    parser.add_argument("--explain", action="store_true", help="Output explainable validation v2 JSON grouped by envelope level")
+    parser.add_argument("--preflight", action="store_true", help="Output rejection-risk preflight summary JSON")
     parser.add_argument("--rules", type=pathlib.Path, help="Optional JSON companion-guide / payer rule pack")
+    parser.add_argument(
+        "--forensic", action="store_true",
+        help="Run forensic analysis: deep claim tracing, segment journey, unusual pattern detection. "
+        "Produces a detailed research-grade breakdown."
+    )
+    parser.add_argument(
+        "--rules-trace", action="store_true",
+        help="Show a transparent rule-matching trace when a companion-guide / payer rule pack "
+        "is supplied. Prints which rules were evaluated, what values were checked, "
+        "and whether each rule matched — useful for auditing why a rule fired or didn't."
+    )
 
     args = parser.parse_args()
 
@@ -1002,25 +1332,71 @@ def main() -> None:
     validator = X12Validator(x12, mode=args.mode)
     result = validator.validate()
 
+    companion_result = None
+    companion_trace_output = ""
+
     if args.rules:
         try:
             pack = load_rule_pack(args.rules)
         except (OSError, json.JSONDecodeError, RulePackError) as exc:
             print(f"ERROR: could not load rule pack {args.rules}: {exc}", file=sys.stderr)
             sys.exit(2)
-        companion = CompanionRuleEngine(x12).apply_pack(pack)
-        for issue in companion.issues:
+        companion = CompanionRuleEngine(x12)
+        if args.rules_trace:
+            companion_trace_output = _format_rules_trace(x12, pack)
+        companion_result = companion.apply_pack(pack)
+        for issue in companion_result.issues:
             if issue.severity == "error":
                 result.add_error(issue.code, issue.message, issue.segment_tag, issue.segment_position)
             else:
                 result.add_warning(issue.code, issue.message, issue.segment_tag, issue.segment_position)
 
-    if args.json:
+    # ── Forensic mode ───────────────────────────────────────────────────────
+    if args.forensic:
+        from src.forensic import X12ForensicAnalyzer
+        analyzer = X12ForensicAnalyzer(x12)
+        report = analyzer.analyze()
+        text = analyzer.render_text(report)
+        if companion_trace_output:
+            text += "\n\n" + companion_trace_output
+        if args.output:
+            args.output.write_text(text)
+            print(f"[OK] Forensic report written: {args.output}")
+        else:
+            print(text)
+        sys.exit(0 if result.clean else 1)
+
+    # ── Preflight mode ───────────────────────────────────────────────────────
+    if args.preflight:
+        # Preflight is primarily a machine-readable risk summary; default to
+        # JSON even without an explicit --json so downstream tooling/tests can
+        # rely on stable structured output.
+        text = format_preflight_json(result)
+        if args.compact:
+            text = json.dumps(json.loads(text), separators=(",", ":"))
+        if args.output:
+            args.output.write_text(text)
+            status = "CLEAN" if result.clean else "ERRORS"
+            print(f"[{status}] Report written: {args.output}")
+        else:
+            print(text)
+        sys.exit(0 if result.clean else 1)
+
+    # ── Default / explain / json output ──────────────────────────────────────
+    elif args.explain:
+        text = format_explanation_json(result)
+        if args.compact:
+            text = json.dumps(json.loads(text), separators=(",", ":"))
+    elif args.json:
         text = format_json(result)
         if args.compact:
             text = json.dumps(json.loads(text), separators=(",", ":"))
     else:
         text = format_report(result, verbose=args.verbose)
+
+    # Append rules trace to non-forensic output if applicable
+    if companion_trace_output:
+        text += "\n\n" + companion_trace_output
 
     if args.output:
         args.output.write_text(text)
