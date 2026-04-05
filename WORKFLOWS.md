@@ -151,6 +151,8 @@ Current bundle outputs include:
 - `claims_analytics_837.csv`
 - `reconciliation_835.csv`
 - `service_lines_analytics.csv`
+- `ANALYTICS_SCHEMA.json`
+- `duckdb_import.sql`
 
 ### Best used for
 - SQL / DuckDB / BI analysis
@@ -164,6 +166,14 @@ Current bundle outputs include:
 ```bash
 python3 -m src.cli file.edi --format analytics -o out/analytics
 ```
+
+Optional Parquet convenience export:
+
+```bash
+python3 -m src.cli file.edi --format analytics-parquet -o out/analytics_parquet
+```
+
+That Parquet mode is intentionally optional and dependency-gated. This repo does **not** claim full native DuckDB support; it emits warehouse-friendly CSVs plus starter artifacts that DuckDB can read directly.
 
 ### Workflow value
 This is the bridge from parser output to analyst workflow.

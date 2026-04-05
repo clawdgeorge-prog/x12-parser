@@ -388,9 +388,25 @@ class PreflightRiskEngine:
     def format_json(self, summary: PreflightSummary) -> str:
         """Machine-readable JSON preflight report."""
         import json
+        # Derive a risk level consistent with validate.py's scoring
+        score = min(100, (
+            summary.blocking_count * 40
+            + summary.elevated_count * 15
+            + summary.warning_count * 5
+        ))
+        if score >= 70:
+            risk_level = "high"
+        elif score >= 30:
+            risk_level = "medium"
+        elif score > 0:
+            risk_level = "low"
+        else:
+            risk_level = "minimal"
         return json.dumps(
             {
                 "overall_tier": summary.overall_tier,
+                "rejection_risk_score": score,
+                "rejection_risk_level": risk_level,
                 "submission_ready": summary.submission_ready,
                 "issue_counts": {
                     "total": summary.total_issues,

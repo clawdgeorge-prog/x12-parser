@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import pathlib
+import subprocess
 import sys
 import tempfile
 
@@ -321,7 +322,30 @@ class TestAnalyticsBundle:
                 "service_lines_analytics.csv",
             }
             assert (out / "claims_analytics_835.csv").exists()
+            assert (out / "ANALYTICS_SCHEMA.json").exists()
+            assert (out / "duckdb_import.sql").exists()
             assert counts["claims_analytics_835.csv"] == 4
+
+    def test_analytics_schema_artifact_contains_duckdb_hints(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            exporter.write_analytics_bundle(data, out)
+            payload = json.loads((out / "ANALYTICS_SCHEMA.json").read_text())
+            assert payload["schema_version"] == "1.0"
+            hints = payload["artifacts"]["claims_analytics_835.csv"]["duckdb_types"]
+            assert hints["clp_paid"] == "DECIMAL(18,2)"
+            assert hints["has_paid_discrepancy"] == "BOOLEAN"
+
+    def test_analytics_bundle_writes_duckdb_starter_sql(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            exporter.write_analytics_bundle(data, out)
+            sql = (out / "duckdb_import.sql").read_text()
+            assert "read_csv_auto" in sql
+            assert "claims_analytics_835" in sql
+            assert "nullstr=''" in sql
 
     def test_835_analytics_contains_enriched_fields(self):
         data = _parse_fixture("sample_835_rich.edi")
@@ -353,3 +377,29 @@ class TestAnalyticsBundle:
         rows = list(exporter._build_835_reconciliation_records(data))
         assert rows
         assert all("reconciliation_status" in row for row in rows)
+
+    def test_analytics_parquet_requires_optional_dependency_when_missing(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        if exporter.pd is not None:
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            out = pathlib.Path(tmp)
+            try:
+                exporter.write_analytics_parquet_bundle(data, out)
+                assert False, "Expected RuntimeError when pandas is unavailable"
+            except RuntimeError as exc:
+                assert "requires optional dependency 'pandas'" in str(exc)
+
+    def test_cli_analytics_parquet_returns_exit_2_when_optional_dependency_missing(self):
+        if exporter.pd is not None:
+            return
+        fixture = FIXTURES / "sample_835_rich.edi"
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [sys.executable, "-m", "src.cli", str(fixture), "--format", "analytics-parquet", "-o", tmp],
+                capture_output=True,
+                text=True,
+                cwd=pathlib.Path(__file__).parent.parent,
+            )
+            assert result.returncode == 2
+            assert "requires optional dependency 'pandas'" in result.stderr

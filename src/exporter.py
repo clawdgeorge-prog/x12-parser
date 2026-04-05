@@ -1,10 +1,12 @@
 """
-X12 Export Module — CSV, NDJSON, and SQLite-ready normalized output.
+X12 Export Module — CSV, NDJSON, SQLite-ready, and analytics-hardened output.
 
 Supports structured extraction from parsed 835 and 837 transactions:
   --format csv      → flat CSV files per record type (claims, svc lines, adjustments, entities)
   --format ndjson   → newline-delimited JSON (one object per record)
   --format sqlite   → normalized CSV files + schema.sql ready for SQLite import
+  --format analytics → analytics CSV bundle + DuckDB-friendly schema artifacts
+  --format analytics-parquet → optional Parquet analytics bundle (requires pandas + pyarrow/fastparquet)
 
 Usage:
     python3 -m src.cli <file> --format csv -o output_dir/
@@ -18,6 +20,11 @@ import json
 import pathlib
 import sys
 from typing import Any, Iterator, List, Optional, TextIO
+
+try:  # Optional dependency for Parquet output.
+    import pandas as pd  # type: ignore
+except Exception:  # pragma: no cover - exercised via explicit failure path tests
+    pd = None
 
 
 # ── Normalized record builders ─────────────────────────────────────────────────
@@ -389,6 +396,192 @@ CSV_RECONCILIATION_835_FIELDS = [
 ]
 
 
+ANALYTICS_DUCKDB_TYPE_HINTS = {
+    "claims_analytics_835.csv": {
+        "interchange_ctrl": "VARCHAR",
+        "isa_sender": "VARCHAR",
+        "isa_receiver": "VARCHAR",
+        "gs_ctrl": "VARCHAR",
+        "gs_version": "VARCHAR",
+        "st_ctrl": "VARCHAR",
+        "transaction_type": "VARCHAR",
+        "claim_id": "VARCHAR",
+        "status_code": "VARCHAR",
+        "status_label": "VARCHAR",
+        "status_category": "VARCHAR",
+        "patient_name": "VARCHAR",
+        "clp_billed": "DECIMAL(18,2)",
+        "clp_allowed": "DECIMAL(18,2)",
+        "clp_paid": "DECIMAL(18,2)",
+        "clp_adjustment": "DECIMAL(18,2)",
+        "svc_billed": "DECIMAL(18,2)",
+        "svc_paid": "DECIMAL(18,2)",
+        "service_line_count": "INTEGER",
+        "estimated_unpaid_amount": "DECIMAL(18,2)",
+        "allowed_gap_amount": "DECIMAL(18,2)",
+        "cas_adjustment_sum": "DECIMAL(18,2)",
+        "cas_adjustments_by_group_json": "JSON",
+        "adjustment_group_codes": "VARCHAR",
+        "has_billed_discrepancy": "BOOLEAN",
+        "has_paid_discrepancy": "BOOLEAN",
+        "discrepancy_types": "VARCHAR",
+        "payer_name": "VARCHAR",
+        "provider_name": "VARCHAR",
+        "payment_amount": "DECIMAL(18,2)",
+        "check_trace": "VARCHAR",
+        "bpr_payment_method": "VARCHAR",
+        "bpr_account_type": "VARCHAR",
+        "bpr_vs_paid_difference": "DECIMAL(18,2)",
+        "bpr_vs_paid_balanced": "BOOLEAN",
+        "payment_match_key": "VARCHAR",
+    },
+    "claims_analytics_837.csv": {
+        "interchange_ctrl": "VARCHAR",
+        "isa_sender": "VARCHAR",
+        "isa_receiver": "VARCHAR",
+        "gs_ctrl": "VARCHAR",
+        "gs_version": "VARCHAR",
+        "st_ctrl": "VARCHAR",
+        "transaction_type": "VARCHAR",
+        "claim_id": "VARCHAR",
+        "variant": "VARCHAR",
+        "variant_indicator": "VARCHAR",
+        "clp_billed": "DECIMAL(18,2)",
+        "total_svc_billed": "DECIMAL(18,2)",
+        "total_svc_paid": "DECIMAL(18,2)",
+        "service_line_count": "INTEGER",
+        "estimated_unpaid_amount": "DECIMAL(18,2)",
+        "has_discrepancy": "BOOLEAN",
+        "discrepancy_reason": "VARCHAR",
+        "billing_provider": "VARCHAR",
+        "payer_name": "VARCHAR",
+        "submitter_name": "VARCHAR",
+        "subscriber_name": "VARCHAR",
+        "patient_name": "VARCHAR",
+        "bht_id": "VARCHAR",
+        "bht_date": "VARCHAR",
+        "billing_provider_hl_id": "VARCHAR",
+        "subscriber_hl_id": "VARCHAR",
+        "patient_hl_id": "VARCHAR",
+    },
+    "reconciliation_835.csv": {
+        "interchange_ctrl": "VARCHAR",
+        "st_ctrl": "VARCHAR",
+        "claim_id": "VARCHAR",
+        "reconciliation_status": "VARCHAR",
+        "status_code": "VARCHAR",
+        "status_label": "VARCHAR",
+        "clp_billed": "DECIMAL(18,2)",
+        "clp_paid": "DECIMAL(18,2)",
+        "svc_billed": "DECIMAL(18,2)",
+        "svc_paid": "DECIMAL(18,2)",
+        "cas_adjustment_sum": "DECIMAL(18,2)",
+        "has_billed_discrepancy": "BOOLEAN",
+        "has_paid_discrepancy": "BOOLEAN",
+        "bpr_payment_amount": "DECIMAL(18,2)",
+        "bpr_vs_paid_difference": "DECIMAL(18,2)",
+        "bpr_vs_paid_balanced": "BOOLEAN",
+        "check_trace": "VARCHAR",
+        "payer_name": "VARCHAR",
+        "provider_name": "VARCHAR",
+    },
+    "service_lines_analytics.csv": {
+        "interchange_ctrl": "VARCHAR",
+        "isa_sender": "VARCHAR",
+        "gs_version": "VARCHAR",
+        "st_ctrl": "VARCHAR",
+        "transaction_type": "VARCHAR",
+        "claim_id": "VARCHAR",
+        "line_number": "INTEGER",
+        "procedure_code": "VARCHAR",
+        "billed": "DECIMAL(18,2)",
+        "paid": "DECIMAL(18,2)",
+    },
+}
+
+
+def _write_csv_rows(path: pathlib.Path, fieldnames: list[str], rows: list[dict]) -> int:
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for rec in rows:
+            w.writerow(rec)
+    return len(rows)
+
+
+def _analytics_file_specs(data: dict) -> list[tuple[str, list[str], list[dict]]]:
+    return [
+        ("claims_analytics_835.csv", CSV_ANALYTICS_835_FIELDS, list(_build_835_analytics_records(data))),
+        ("claims_analytics_837.csv", CSV_ANALYTICS_837_FIELDS, list(_build_837_analytics_records(data))),
+        ("reconciliation_835.csv", CSV_RECONCILIATION_835_FIELDS, list(_build_835_reconciliation_records(data))),
+        ("service_lines_analytics.csv", CSV_SVC_LINE_FIELDS, list(_build_service_line_records(data))),
+    ]
+
+
+def _write_analytics_schema_artifacts(output_dir: pathlib.Path, counts: dict[str, int]) -> None:
+    schema_payload = {
+        "schema_version": "1.0",
+        "purpose": "DuckDB-friendly hints for analytics CSV exports. These are import suggestions, not a guarantee of exact warehouse typing.",
+        "null_encoding": "Empty string for missing values in CSV exports.",
+        "artifacts": {
+            name: {
+                "duckdb_types": ANALYTICS_DUCKDB_TYPE_HINTS.get(name, {}),
+                "record_count": counts.get(name, 0),
+            }
+            for name in ANALYTICS_DUCKDB_TYPE_HINTS
+        },
+    }
+    (output_dir / "ANALYTICS_SCHEMA.json").write_text(
+        json.dumps(schema_payload, indent=2, ensure_ascii=False, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    lines = [
+        "-- X12 Parser analytics bundle — DuckDB import starter",
+        "-- This project does not claim native DuckDB integration.",
+        "-- These statements are a convenience layer for querying the emitted CSV bundle.",
+        "",
+    ]
+    for filename, fields in ANALYTICS_DUCKDB_TYPE_HINTS.items():
+        table = filename.replace('.csv', '')
+        column_lines = [f"        '{col}': '{dtype}'" for col, dtype in fields.items()]
+        lines.append(f"CREATE OR REPLACE VIEW {table} AS")
+        lines.append("SELECT * FROM read_csv_auto(")
+        lines.append(f"    '{filename}',")
+        lines.append("    header=true,")
+        lines.append("    nullstr='',")
+        lines.append("    columns={")
+        lines.append(",\n".join(column_lines))
+        lines.append("    }")
+        lines.append(");")
+        lines.append("")
+    (output_dir / "duckdb_import.sql").write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_analytics_parquet_bundle(data: dict, output_dir: pathlib.Path) -> dict:
+    """Write Parquet versions of analytics extracts when optional deps are available."""
+    if pd is None:
+        raise RuntimeError(
+            "analytics-parquet export requires optional dependency 'pandas' "
+            "plus a Parquet engine such as 'pyarrow' or 'fastparquet'"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    counts: dict[str, int] = {}
+    for filename, _fieldnames, rows in _analytics_file_specs(data):
+        parquet_name = filename.replace(".csv", ".parquet")
+        frame = pd.DataFrame(rows)
+        frame.to_parquet(output_dir / parquet_name, index=False)
+        counts[parquet_name] = len(frame.index)
+
+    (output_dir / "PARQUET_NOTE.txt").write_text(
+        "Optional Parquet analytics bundle written successfully.\n"
+        "This is a convenience export for DuckDB/warehouse workflows, not a claim of full native DuckDB integration.\n",
+        encoding="utf-8",
+    )
+    return counts
+
+
 def _build_835_analytics_records(data: dict) -> Iterator[dict]:
     """Yield enriched 835 claim records for BI / analytics workflows."""
     for ic in data.get("interchanges", []):
@@ -567,22 +760,10 @@ def write_analytics_bundle(data: dict, output_dir: pathlib.Path) -> dict:
     """Write analytics-oriented CSV extracts for 835/837 workflows."""
     output_dir.mkdir(parents=True, exist_ok=True)
     counts = {}
+    for filename, fieldnames, rows in _analytics_file_specs(data):
+        counts[filename] = _write_csv_rows(output_dir / filename, fieldnames, rows)
 
-    files = [
-        ("claims_analytics_835.csv", CSV_ANALYTICS_835_FIELDS, _build_835_analytics_records(data)),
-        ("claims_analytics_837.csv", CSV_ANALYTICS_837_FIELDS, _build_837_analytics_records(data)),
-        ("reconciliation_835.csv", CSV_RECONCILIATION_835_FIELDS, _build_835_reconciliation_records(data)),
-        ("service_lines_analytics.csv", CSV_SVC_LINE_FIELDS, _build_service_line_records(data)),
-    ]
-
-    for filename, fieldnames, rows in files:
-        row_list = list(rows)
-        with open(output_dir / filename, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            for rec in row_list:
-                w.writerow(rec)
-        counts[filename] = len(row_list)
+    _write_analytics_schema_artifacts(output_dir, counts)
 
     return counts
 

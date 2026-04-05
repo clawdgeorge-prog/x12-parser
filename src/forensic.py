@@ -638,6 +638,23 @@ class X12ForensicAnalyzer:
         lines.append("X12 FORENSIC ANALYSIS REPORT")
         lines.append("=" * 64)
 
+        # ── Top-level summary line ──────────────────────────────────────────
+        total_claims = len(report.claims)
+        total_tx = len(report.transactions)
+        unusual_tx = sum(1 for t in report.transactions if t.unusual_patterns)
+        flag_count = len(report.overall_flags)
+        summary_parts = [
+            f"{total_tx} transaction set(s)",
+            f"{total_claims} claim(s)",
+        ]
+        if unusual_tx:
+            summary_parts.append(f"{unusual_tx} with unusual patterns")
+        if flag_count:
+            summary_parts.append(f"{flag_count} file-level flag(s)")
+        if not unusual_tx and not flag_count:
+            summary_parts.append("no unusual patterns detected")
+        lines.append(f"\n  Summary: {', '.join(summary_parts)}")
+
         # Interchange
         ic = report.interchange
         lines.append(f"\nINTERCHANGE")

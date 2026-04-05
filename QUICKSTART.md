@@ -75,6 +75,8 @@ Writes:
 - `claims_analytics_837.csv` — enriched 837 claim facts
 - `reconciliation_835.csv` — claim-level reconciliation status
 - `service_lines_analytics.csv` — service-line facts
+- `ANALYTICS_SCHEMA.json` — field/type hints for warehouse import
+- `duckdb_import.sql` — starter DuckDB SQL for the emitted CSV files
 
 These analytics exports add bounded derived fields such as:
 - estimated unpaid amount
@@ -82,6 +84,14 @@ These analytics exports add bounded derived fields such as:
 - CAS adjustments by group (JSON)
 - payment match key (`claim_id|check_trace`)
 - BPR-vs-paid balancing fields
+
+Optional Parquet variant:
+
+```bash
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o out/analytics_parquet
+```
+
+This requires optional dependencies (`pandas` + `pyarrow` or `fastparquet`). The project is still CSV-first; Parquet is provided as a convenience export for DuckDB / warehouse workflows.
 
 ## 5) Reconcile an 835 against a reference claim list
 

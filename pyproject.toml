@@ -10,3 +10,4 @@ pythonpath = ["."]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+parquet = ["pandas>=2", "pyarrow>=15"]

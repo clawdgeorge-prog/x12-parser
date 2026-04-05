@@ -136,11 +136,15 @@ Six output formats are available via `--format`:
 
 **`sqlite`** — a normalized SQLite-ready export bundle. Writes all CSV files above plus three additional envelope-level CSVs (`interchanges.csv`, `functional_groups.csv`, `transactions.csv`), a `schema.sql` with `CREATE TABLE` statements, and an `IMPORT_GUIDE.txt` with copy-pasteable SQLite import commands.
 
-**`analytics`** — an analytics-oriented CSV bundle. Writes enriched 835 and 837 claim fact tables, a claim-level 835 reconciliation extract, and analytics-friendly service-line rows.
+**`analytics`** — an analytics-oriented CSV bundle. Writes enriched 835 and 837 claim fact tables, a claim-level 835 reconciliation extract, and analytics-friendly service-line rows. It also emits:
+  - `ANALYTICS_SCHEMA.json` — stable field/type hints for warehouse import
+  - `duckdb_import.sql` — starter SQL for querying the CSV bundle from DuckDB
+
+**`analytics-parquet`** — optional Parquet form of the analytics bundle. This requires `pandas` plus a Parquet engine (`pyarrow` or `fastparquet`). It is a convenience export, not a claim of first-class native DuckDB integration.
 
 **`reconcile`** — a bounded 835 reconciliation bundle. Optionally matches parsed 835 claims against a reference CSV (`claim_id` required, `expected_paid` optional) and writes matched rows, unmatched references, duplicate suspects, balance anomalies, and a summary JSON.
 
-All monetary fields in CSV/SQLite/analytics exports are expressed as plain decimal strings (e.g. `"250.00"`). `null`/missing values are written as empty strings, which SQLite imports as blank (use `NULLIF(col,'')` in queries if you need `NULL` handling).
+All monetary fields in CSV/SQLite/analytics exports are expressed as plain decimal strings (e.g. `"250.00"`). `null`/missing values are written as empty strings, which SQLite and DuckDB can normalize with `NULLIF(col,'')` when you want typed null handling.
 
 ---
 
@@ -172,6 +176,9 @@ python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
 
 # Analytics bundle — enriched claim facts + reconciliation-oriented extracts
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
+
+# Optional Parquet analytics bundle — requires pandas + pyarrow/fastparquet
+python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o analytics_parquet/
 
 # Reconciliation bundle — compare 835 claims against a reference CSV
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format reconcile \
@@ -242,6 +249,15 @@ A small config-driven foundation now exists for payer-specific rules:
 
 This is intentionally not a full companion-guide interpreter. It is a thin framework for encoding a few high-value payer quirks honestly.
 
+Example sample packs now include:
+- `premier-835-companion.sample.json`
+- `aetna-835-companion.sample.json`
+- `cigna-835-companion.sample.json`
+- `medicare-837i-companion.sample.json`
+- `medicaid-837i-companion.sample.json`
+- `bcbs-837i-companion.sample.json`
+- `uhc-837p-companion.sample.json`
+
 **Exit codes:** `0` = clean, `1` = structural errors found, `2` = could not parse.
 
 ---
@@ -263,8 +279,8 @@ x12-parser/
 ├── src/
 │   ├── __init__.py       — package entry point
 │   ├── parser.py         — core parser (tokenizer, segment, loop, envelope, summary)
-│   ├── cli.py            — parse CLI (JSON/NDJSON/CSV/SQLite output)
-│   ├── exporter.py       — export engine (CSV, NDJSON, SQLite bundle)
+│   ├── cli.py            — parse CLI (JSON/NDJSON/CSV/SQLite/analytics output)
+│   ├── exporter.py       — export engine (CSV, NDJSON, SQLite, analytics, optional Parquet bundle)
 │   └── validate.py       — validate CLI (structural report + recommendations)
 ├── tests/
 │   ├── test_parser.py    — pytest unit tests
@@ -285,8 +301,13 @@ x12-parser/
 │   └── *.txt / *.json    — pre-generated sample outputs
 ├── examples/
 │   └── rules/
+│       ├── aetna-835-companion.sample.json
+│       ├── bcbs-837i-companion.sample.json
+│       ├── cigna-835-companion.sample.json
+│       ├── medicaid-837i-companion.sample.json
+│       ├── medicare-837i-companion.sample.json
 │       ├── premier-835-companion.sample.json
-│       └── medicare-837i-companion.sample.json
+│       └── uhc-837p-companion.sample.json
 ├── DEMO.md               — demo walkthrough and sample output
 ├── run_tests.py          — manual test runner
 ├── ROADMAP.md            — gap analysis and planned improvements

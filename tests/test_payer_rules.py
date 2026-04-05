@@ -18,6 +18,15 @@ def test_load_sample_rule_pack():
     assert len(pack.rules) == 2
 
 
+def test_all_example_rule_packs_load():
+    packs = sorted(EXAMPLES.glob("*.json"))
+    assert len(packs) >= 7
+    loaded = [load_rule_pack(path) for path in packs]
+    assert all(pack.rules for pack in loaded)
+    assert any("Aetna" in pack.name for pack in loaded)
+    assert any("UnitedHealthcare" in pack.name for pack in loaded)
+
+
 def test_invalid_rule_pack_rejected(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"name": "bad", "rules": [{"id": "x"}]}))

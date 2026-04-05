@@ -8,6 +8,7 @@ Supports output formats:
   csv     — flat CSV files (claims, service lines, entities)
   sqlite  — normalized CSV bundle + schema.sql ready for SQLite import
   analytics — analytics-oriented CSV bundle for BI / reconciliation
+  analytics-parquet — optional Parquet analytics bundle (requires pandas + pyarrow/fastparquet)
   reconcile — 835 reconciliation bundle / JSON report
 
 Usage:
@@ -16,6 +17,7 @@ Usage:
     python3 -m src.cli <input.edi> --format csv -o output_dir/
     python3 -m src.cli <input.edi> --format sqlite -o output_dir/
     python3 -m src.cli <input.edi> --format analytics -o analytics_dir/
+    python3 -m src.cli <input.edi> --format analytics-parquet -o analytics_parquet_dir/
     python3 -m src.cli <input.edi> --format reconcile --reference-csv expected_claims.csv -o reconcile_dir/
     python3 -m src.cli <input.edi> --summary
 
@@ -26,6 +28,7 @@ Examples:
     python3 -m src.cli tests/fixtures/sample_835.edi --format csv -o extracts/
     python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
     python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
+    python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o analytics_parquet/
     python3 -m src.cli tests/fixtures/sample_835.edi --compact
     python3 -m src.cli tests/fixtures/sample_835.edi --summary
     python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
@@ -218,9 +221,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "ndjson", "csv", "sqlite", "analytics", "reconcile"],
+        choices=["json", "ndjson", "csv", "sqlite", "analytics", "analytics-parquet", "reconcile"],
         default="json",
-        help="Output format: json (default), ndjson, csv, sqlite, analytics, or reconcile",
+        help="Output format: json (default), ndjson, csv, sqlite, analytics, analytics-parquet, or reconcile",
     )
     parser.add_argument(
         "--reference-csv",
@@ -295,6 +298,20 @@ def main() -> None:
         if not args.output:
             out_dir = Path(".")
         counts = exporter.write_analytics_bundle(data, out_dir)
+        total = sum(counts.values())
+        for fname, cnt in sorted(counts.items()):
+            print(f"[OK] {fname}: {cnt} records")
+        print(f"Total: {total} records across {len(counts)} files in {out_dir}/")
+
+    elif args.format == "analytics-parquet":
+        out_dir = args.output or Path(".")
+        if not args.output:
+            out_dir = Path(".")
+        try:
+            counts = exporter.write_analytics_parquet_bundle(data, out_dir)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(2)
         total = sum(counts.values())
         for fname, cnt in sorted(counts.items()):
             print(f"[OK] {fname}: {cnt} records")
