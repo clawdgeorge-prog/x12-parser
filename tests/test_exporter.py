@@ -388,7 +388,31 @@ class TestAnalyticsBundle:
                 exporter.write_analytics_parquet_bundle(data, out)
                 assert False, "Expected RuntimeError when pandas is unavailable"
             except RuntimeError as exc:
-                assert "requires optional dependency 'pandas'" in str(exc)
+                assert "pip install -e .[parquet]" in str(exc)
+                assert "pandas + pyarrow" in str(exc)
+
+    def test_analytics_parquet_rewraps_engine_error(self):
+        data = _parse_fixture("sample_835_rich.edi")
+        if exporter.pd is None:
+            return
+
+        original = exporter.pd.DataFrame.to_parquet
+
+        def boom(self, *args, **kwargs):
+            raise ImportError("Missing optional dependency 'pyarrow'")
+
+        exporter.pd.DataFrame.to_parquet = boom
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out = pathlib.Path(tmp)
+                try:
+                    exporter.write_analytics_parquet_bundle(data, out)
+                    assert False, "Expected RuntimeError when parquet engine is unavailable"
+                except RuntimeError as exc:
+                    assert "pip install -e .[parquet]" in str(exc)
+                    assert "pyarrow" in str(exc)
+        finally:
+            exporter.pd.DataFrame.to_parquet = original
 
     def test_cli_analytics_parquet_returns_exit_2_when_optional_dependency_missing(self):
         if exporter.pd is not None:
@@ -402,4 +426,4 @@ class TestAnalyticsBundle:
                 cwd=pathlib.Path(__file__).parent.parent,
             )
             assert result.returncode == 2
-            assert "requires optional dependency 'pandas'" in result.stderr
+            assert "pip install -e .[parquet]" in result.stderr

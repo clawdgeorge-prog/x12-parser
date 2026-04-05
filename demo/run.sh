@@ -110,6 +110,22 @@ rm -rf demo/analytics_out
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o demo/analytics_out
 echo ""
 
+# ── 8. Sample payer-pack inventory + optional parquet export ─────────────
+echo ">>> 8. SAMPLE PAYER PACKS  (inventory check)"
+find examples/rules -maxdepth 1 -name '*.json' -print | sort | sed 's#^#    - #' 
+echo ""
+
+echo ">>> 9. OPTIONAL PARQUET EXPORT  (dependency-gated)"
+echo "    Command: python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o demo/analytics_parquet_out"
+echo ""
+rm -rf demo/analytics_parquet_out
+if python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o demo/analytics_parquet_out; then
+  echo "    ↳ Parquet export succeeded."
+else
+  echo "    ↳ Parquet export skipped: install optional deps with pip install -e .[parquet]"
+fi
+echo ""
+
 echo "============================================================"
 echo "Demo complete.  See DEMO.md for full documentation."
 echo "============================================================"

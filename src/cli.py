@@ -8,7 +8,7 @@ Supports output formats:
   csv     — flat CSV files (claims, service lines, entities)
   sqlite  — normalized CSV bundle + schema.sql ready for SQLite import
   analytics — analytics-oriented CSV bundle for BI / reconciliation
-  analytics-parquet — optional Parquet analytics bundle (requires pandas + pyarrow/fastparquet)
+  analytics-parquet — optional Parquet analytics bundle (requires `pip install -e .[parquet]`, currently pandas + pyarrow)
   reconcile — 835 reconciliation bundle / JSON report
 
 Usage:

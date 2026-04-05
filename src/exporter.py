@@ -6,7 +6,7 @@ Supports structured extraction from parsed 835 and 837 transactions:
   --format ndjson   → newline-delimited JSON (one object per record)
   --format sqlite   → normalized CSV files + schema.sql ready for SQLite import
   --format analytics → analytics CSV bundle + DuckDB-friendly schema artifacts
-  --format analytics-parquet → optional Parquet analytics bundle (requires pandas + pyarrow/fastparquet)
+  --format analytics-parquet → optional Parquet analytics bundle (requires `pip install -e .[parquet]`, currently pandas + pyarrow)
 
 Usage:
     python3 -m src.cli <file> --format csv -o output_dir/
@@ -562,17 +562,24 @@ def write_analytics_parquet_bundle(data: dict, output_dir: pathlib.Path) -> dict
     """Write Parquet versions of analytics extracts when optional deps are available."""
     if pd is None:
         raise RuntimeError(
-            "analytics-parquet export requires optional dependency 'pandas' "
-            "plus a Parquet engine such as 'pyarrow' or 'fastparquet'"
+            "analytics-parquet export requires optional dependencies from `pip install -e .[parquet]` "
+            "(currently pandas + pyarrow)"
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
-    for filename, _fieldnames, rows in _analytics_file_specs(data):
-        parquet_name = filename.replace(".csv", ".parquet")
-        frame = pd.DataFrame(rows)
-        frame.to_parquet(output_dir / parquet_name, index=False)
-        counts[parquet_name] = len(frame.index)
+    try:
+        for filename, _fieldnames, rows in _analytics_file_specs(data):
+            parquet_name = filename.replace(".csv", ".parquet")
+            frame = pd.DataFrame(rows)
+            frame.to_parquet(output_dir / parquet_name, index=False)
+            counts[parquet_name] = len(frame.index)
+    except (ImportError, ModuleNotFoundError, ValueError) as exc:
+        raise RuntimeError(
+            "analytics-parquet export requires optional dependencies from `pip install -e .[parquet]` "
+            "(currently pandas + pyarrow). Underlying parquet writer error: "
+            f"{exc}"
+        ) from exc
 
     (output_dir / "PARQUET_NOTE.txt").write_text(
         "Optional Parquet analytics bundle written successfully.\n"

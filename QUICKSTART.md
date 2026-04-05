@@ -91,7 +91,7 @@ Optional Parquet variant:
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o out/analytics_parquet
 ```
 
-This requires optional dependencies (`pandas` + `pyarrow` or `fastparquet`). The project is still CSV-first; Parquet is provided as a convenience export for DuckDB / warehouse workflows.
+This currently requires `pip install -e .[parquet]` (pandas + pyarrow). The project is still CSV-first; Parquet is provided as a convenience export for DuckDB / warehouse workflows.
 
 ## 5) Reconcile an 835 against a reference claim list
 

@@ -140,7 +140,7 @@ Six output formats are available via `--format`:
   - `ANALYTICS_SCHEMA.json` — stable field/type hints for warehouse import
   - `duckdb_import.sql` — starter SQL for querying the CSV bundle from DuckDB
 
-**`analytics-parquet`** — optional Parquet form of the analytics bundle. This requires `pandas` plus a Parquet engine (`pyarrow` or `fastparquet`). It is a convenience export, not a claim of first-class native DuckDB integration.
+**`analytics-parquet`** — optional Parquet form of the analytics bundle. This currently requires `pip install -e .[parquet]` (pandas + pyarrow). It is a convenience export, not a claim of first-class native DuckDB integration.
 
 **`reconcile`** — a bounded 835 reconciliation bundle. Optionally matches parsed 835 claims against a reference CSV (`claim_id` required, `expected_paid` optional) and writes matched rows, unmatched references, duplicate suspects, balance anomalies, and a summary JSON.
 
@@ -177,7 +177,7 @@ python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
 # Analytics bundle — enriched claim facts + reconciliation-oriented extracts
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
 
-# Optional Parquet analytics bundle — requires pandas + pyarrow/fastparquet
+# Optional Parquet analytics bundle — requires `pip install -e .[parquet]` (currently pandas + pyarrow)
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o analytics_parquet/
 
 # Reconciliation bundle — compare 835 claims against a reference CSV
