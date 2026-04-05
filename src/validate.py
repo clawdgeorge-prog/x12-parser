@@ -33,7 +33,6 @@ from typing import Optional, List, Literal
 
 ValidationMode = Literal["default", "strict", "fragment-aware"]
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 
 from src.parser import X12Parser
 from src.payer_rules import load_rule_pack, RulePackError, CompanionRuleEngine

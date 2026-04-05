@@ -28,11 +28,9 @@ Examples:
 from __future__ import annotations
 import argparse
 import json
-import sys
 from pathlib import Path
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.parser import X12Parser
 from src import exporter

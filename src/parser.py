@@ -21,7 +21,7 @@ Known limitations (documented in README):
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"
 
 import re
 import json
@@ -563,6 +563,8 @@ class X12Parser:
         self.segments: List[Segment] = []
         self.interchanges: List[Interchange] = []
         self._seg_parser = X12SegmentParser()
+        self._parsed = False
+        self._summary_computed = False
 
     @classmethod
     def from_file(cls, path: str | pathlib.Path) -> "X12Parser":
@@ -623,8 +625,11 @@ class X12Parser:
         return elem_sep, comp_sep, rep_sep, seg_term
 
     def _parse(self) -> None:
+        if self._parsed:
+            return
         text = self._raw_text
         if not text.strip():
+            self._parsed = True
             return
 
         elem_sep, comp_sep, rep_sep, seg_term = self._detect_delimiters(text)
@@ -1481,6 +1486,8 @@ class X12Parser:
 
     def _parse_summary(self) -> None:
         """Compute and attach summary dict to each TransactionSet."""
+        if self._summary_computed:
+            return
         for ic in self.interchanges:
             for fg in ic.groups:
                 for ts in fg.transactions:
@@ -1500,7 +1507,7 @@ class X12Parser:
         self._parse()
         self._parse_summary()
         return {
-            "version": "0.1.0",
+            "version": __version__,
             "interchanges": [
                 {
                     "header": _segment_to_dict(ic.header),
