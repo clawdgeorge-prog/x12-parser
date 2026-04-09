@@ -30,6 +30,18 @@ import pathlib
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List
 
+# Taxonomy tables (moved to src.taxonomy for maintainability)
+from src.taxonomy import (
+    _LOOP_DESCRIPTIONS_835,
+    _LOOP_DESCRIPTIONS_837,
+    _LOOP_KINDS,
+    _CLP_STATUS_CODES,
+    _PLB_REASON_CODES,
+    _DISCREPANCY_TAXONOMY,
+    _TRANSACTION_REGISTRY,
+    _GS_FUNCTIONAL_CODES,
+)
+
 
 # ── Character set ────────────────────────────────────────────────────────────
 # X12 uses: segment terminator (default ~), element separator (default *),
@@ -155,48 +167,8 @@ class X12SegmentParser:
 
 # ── 835-aware parser ─────────────────────────────────────────────────────────
 
-# Well-known 835 loop IDs (based on X12 spec)
-_LOOP_835 = {
-    "1000A": "Submitter Name",
-    "1000B": "Receiver Name",
-    "1000C": "Billing Provider Name",
-    "1500":  "Payment Information",
-    "2000":  "Service Payment Information",
-    "2100":  "Claim Payment Information",
-    "2110":  "Service Payment Detail",
-    "2200":  "Adjustment",
-    "2300":  "Remark Codes",
-}
-
-_LOOP_837 = {
-    "1000A": "Submitter Name",
-    "1000B": "Receiver Name",
-    "1000C": "Billing Provider Name",
-    "1000D": "Subscriber Name",
-    "1000E": "Patient Name",
-    "2000A": "Hierarchical Parent",
-    "2000B": "Billing Provider Hierarchical Level",
-    "2000C": "Subscriber Hierarchical Level",
-    "2000D": "Patient Hierarchical Level",
-    "2300":  "Claim Information",
-    "2305":  "Prior Authorization or Referral",
-    "2310A": "Physician or Facility Name",
-    "2310B": "Operating Physician Name",
-    "2310C": "Service Facility Location",
-    "2310D": "Referring Provider Name",
-    "2320":  "Subscriber or Patient Amount",
-    "2330A": "Subscriber Name",
-    "2330B": "Payer Name",
-    "2330C": "Patient Name",
-    "2330D": "Responsible Party Name",
-    "2400":  "Service Line Number",
-    "2410":  "Drug Identification",
-    "2420A": "Operating Physician Name",
-    "2420B": "Other Physician Name",
-    "2420C": "Service Facility Location",
-    "2430":  "Line Adjudication Information",
-    "2440":  "Form Identification",
-}
+# Loop descriptions moved to src/taxonomy/__init__.py
+# Note: _LOOP_835 and _LOOP_837 were defined but never used (dead code)
 
 
 # ── Transaction / version registry ─────────────────────────────────────────
@@ -1526,6 +1498,13 @@ class X12Parser:
         return {
             "version": __version__,
             "schema_version": OUTPUT_SCHEMA_VERSION,
+            # Metadata about parsing decisions that may affect downstream consumers
+            "metadata": {
+                # Loop IDs are derived from the first element of the loop's leader segment
+                # (e.g., "PR", "QC", "CLM"). This is a heuristic; verify loop semantics
+                # match your expectations for novel transaction types.
+                "loop_id_source": "heuristic_first_element",
+            },
             "interchanges": [
                 {
                     "header": _segment_to_dict(ic.header),

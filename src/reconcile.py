@@ -46,6 +46,23 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _match_reason(ref: dict, match: dict | None, variance_paid: float | None) -> str:
+    """Generate human-readable reason for match result."""
+    if match is None:
+        claim_id = ref.get("claim_id", "")
+        expected = ref.get("expected_paid")
+        if expected:
+            return f"No claim found with ID '{claim_id}' and amount near {expected}"
+        return f"No claim found with ID '{claim_id}'"
+    if variance_paid is None:
+        return "Matched by claim_id only (no expected_paid in reference)"
+    if abs(variance_paid) < 0.001:
+        return "Exact amount match"
+    if variance_paid > 0:
+        return f"Matched with positive variance ({variance_paid:+.2f})"
+    return f"Matched with negative variance ({variance_paid:+.2f})"
+
+
 def _claim_rows_from_data(data: dict) -> list[dict]:
     rows: list[dict] = []
     for ic in data.get("interchanges", []):
@@ -144,7 +161,9 @@ def reconcile_data(data: dict, reference_claims: Iterable[dict] | None = None, t
                     used_row_ids.add(row_id)
                     break
             if match is None:
-                unmatched_reference_claims.append(dict(ref))
+                unmatched = dict(ref)
+                unmatched["match_reason"] = _match_reason(ref, None, None)
+                unmatched_reference_claims.append(unmatched)
                 continue
             variance_paid = None
             actual_paid = _to_float(match.get("clp_paid"))
@@ -154,10 +173,11 @@ def reconcile_data(data: dict, reference_claims: Iterable[dict] | None = None, t
                 **dict(ref),
                 **match,
                 "variance_paid": variance_paid,
+                "match_reason": _match_reason(ref, match, variance_paid),
                 "matched": True,
             })
     else:
-        matched_payments = [{**row, "matched": True, "variance_paid": None} for row in claim_rows]
+        matched_payments = [{**row, "matched": True, "variance_paid": None, "match_reason": "Included without reference matching (all claims)"} for row in claim_rows]
 
     total_paid = round(sum(_to_float(r.get("clp_paid")) or 0.0 for r in claim_rows), 2)
     total_billed = round(sum(_to_float(r.get("clp_billed")) or 0.0 for r in claim_rows), 2)

@@ -137,7 +137,7 @@ def _build_837_claim_records(data: dict) -> Iterator[dict]:
                         "clp_billed": _fmt_money(claim.get("clp_billed")),
                         "total_svc_billed": _fmt_money(claim.get("total_svc_billed")),
                         "total_svc_paid": _fmt_money(claim.get("total_svc_paid")),
-                        "service_line_count": _safe(claim.get("service_line_count", "")),
+                        "service_line_count": _safe(len(claim.get("service_lines", []))),
                         "has_discrepancy": str(claim.get("has_discrepancy", False)),
                         "discrepancy_reason": _safe(claim.get("discrepancy_reason", "")),
                         "billing_provider": billing_provider,

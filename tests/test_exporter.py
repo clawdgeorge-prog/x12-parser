@@ -259,6 +259,16 @@ class Test837ServiceLines:
             counts = exporter.write_csv(data, out)
             assert "service_lines.csv" in counts
 
+    def test_837_claim_service_line_count_not_blank(self):
+        """Regression: 837 claim records should have non-blank service_line_count."""
+        data = _parse_fixture("sample_837_prof.edi")
+        records = list(exporter._build_837_claim_records(data))
+        assert len(records) >= 1
+        for rec in records:
+            # service_line_count should derive from len(service_lines), not blank
+            assert rec.get("service_line_count") not in ("", None)
+            assert int(rec["service_line_count"]) >= 1
+
 
 # ── Edge case tests ────────────────────────────────────────────────────────────
 

@@ -640,12 +640,17 @@ class X12Validator:
                     if bal.get("bpr_vs_clp_balanced") is False:
                         diff = bal.get("bpr_vs_clp_difference", 0)
                         bpr_amt = bal.get("bpr_payment_amount")
+                        # Use the same reconciliation target the parser uses
+                        # (sum_svc_paid if available, else sum_clp_paid)
+                        svc_sum = bal.get("sum_svc_paid", 0)
                         clp_sum = bal.get("sum_clp_paid")
+                        reconciliation_target = svc_sum if svc_sum > 0 else clp_sum
+                        target_label = "SVC paid" if svc_sum > 0 else "CLP paid"
                         result.add_warning(
                             "BPR_CLP_SUM_MISMATCH",
                             f"Transaction {ts_idx + 1}: BPR payment amount (${bpr_amt}) "
-                            f"differs from sum of CLP paid amounts (${clp_sum}) by ${diff}; "
-                            f"verify the file is not truncated or that CLP paid amounts "
+                            f"differs from sum of {target_label} amounts (${reconciliation_target}) by ${diff}; "
+                            f"verify the file is not truncated or that paid amounts "
                             f"are correctly extracted (this is a reconciliation flag for review)",
                             "BPR", 0,
                         )
@@ -1108,6 +1113,17 @@ def format_json(result: ValidationResult) -> str:
             "issue_count": len(result.issues),
             "error_count": sum(1 for i in result.issues if i.severity == "error"),
             "warning_count": sum(1 for i in result.issues if i.severity == "warning"),
+            # Metadata about validation scope and known limitations
+            "metadata": {
+                "validation_scope": "bounded_structural_checks",
+                "not_a_tr3_certification": True,
+                "known_limitations": [
+                    "Loop IDs derived from leader segment's first element (heuristic)",
+                    "837 Dental has bounded support, not full semantic coverage",
+                    "TS2/TS3/MIA/MOA segments tolerated but not deeply semanticized",
+                    "837 PRV/CL1/PWK/OI/SVD/MEA/PS1/FRM recognized but bounded support"
+                ],
+            },
             "issues": issues_out,
         },
         indent=2,
