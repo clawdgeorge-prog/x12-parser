@@ -69,6 +69,12 @@ python3 -m src.validate tests/fixtures/sample_missing_ge.edi --preflight
 # Parse shifted-element demo fixture → JSON (compact, inspect repair metadata)
 python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact
 
+# Export dedicated repair audit bundle
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report -o repair_report/
+
+# Strict parse of the same fixture (repairs disabled)
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report --strict-repairs-off
+
 # Parse 837 → JSON (compact)
 python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact
 
@@ -179,6 +185,12 @@ The shifted demo fixture lives at:
 - `tests/fixtures/sample_835_shifted_elements.edi`
 
 Use it when you want a quick proof that the parser is surfacing, not hiding, repair decisions.
+
+If you want a cleaner artifact for batch review, `--format repair-report` writes:
+- `repair_report.json`
+- `repair_events.csv`
+
+If you want to compare behavior without any repair help, rerun the same file with `--strict-repairs-off`.
 
 ### Parse 837 — key fields extracted
 

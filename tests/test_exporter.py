@@ -461,3 +461,38 @@ class TestAnalyticsBundle:
             )
             assert result.returncode == 2
             assert "pip install -e .[parquet]" in result.stderr
+
+    def test_cli_repair_report_bundle_writes_json_and_csv(self):
+        fixture = FIXTURES / "sample_835_shifted_elements.edi"
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [sys.executable, "-m", "src.cli", str(fixture), "--format", "repair-report", "-o", tmp],
+                capture_output=True,
+                text=True,
+                cwd=pathlib.Path(__file__).parent.parent,
+            )
+            assert result.returncode == 0
+
+            out = pathlib.Path(tmp)
+            report = json.loads((out / "repair_report.json").read_text())
+            assert report["repair_mode"] == "tolerant"
+            assert report["repairs_applied"] == 3
+            assert [item["tag"] for item in report["repairs"]] == ["CLP", "CAS", "SVC"]
+
+            rows = list(csv.DictReader((out / "repair_events.csv").open()))
+            assert len(rows) == 3
+            assert [row["tag"] for row in rows] == ["CLP", "CAS", "SVC"]
+
+    def test_cli_strict_mode_turns_repairs_off(self):
+        fixture = FIXTURES / "sample_835_shifted_elements.edi"
+        result = subprocess.run(
+            [sys.executable, "-m", "src.cli", str(fixture), "--format", "repair-report", "--strict-repairs-off"],
+            capture_output=True,
+            text=True,
+            cwd=pathlib.Path(__file__).parent.parent,
+        )
+        assert result.returncode == 0
+        report = json.loads(result.stdout)
+        assert report["repair_mode"] == "strict"
+        assert report["enabled"] is False
+        assert report["repairs_applied"] == 0

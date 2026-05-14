@@ -134,6 +134,18 @@ Then inspect:
 - `metadata.segment_repair_summary.repairs_applied`
 - `metadata.segment_repair_summary.repairs[]`
 
+Or write a dedicated audit bundle:
+
+```bash
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report -o repair_report/
+```
+
+To disable repairs entirely for comparison/debugging:
+
+```bash
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report --strict-repairs-off
+```
+
 Current conservative repair coverage targets obviously shifted `CLP`, `CAS`, and `SVC` segments with stray empty elements.
 
 ## 7) Recommended new-user workflow

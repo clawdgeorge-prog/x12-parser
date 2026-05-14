@@ -64,9 +64,28 @@ python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact | py
 import json, sys
 data = json.load(sys.stdin)
 repairs = data['metadata']['segment_repair_summary']
+print(f'    ↳ Repair mode:          {repairs[\"mode\"]}')
 print(f'    ↳ Repairs applied:      {repairs[\"repairs_applied\"]}')
 for item in repairs['repairs']:
     print(f'      - {item[\"tag\"]} @ segment {item[\"position\"]}: {item[\"action\"]} ({item[\"confidence\"]})')
+"
+echo ""
+
+echo ">>> 3b. REPAIR REPORT BUNDLE  (JSON + CSV audit output)"
+echo "    Command: python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report -o demo/repair_report_out"
+echo ""
+rm -rf demo/repair_report_out
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report -o demo/repair_report_out
+
+echo ""
+echo ">>> 3c. STRICT MODE COMPARISON  (repairs disabled)"
+echo "    Command: python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report --strict-repairs-off"
+echo ""
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report --strict-repairs-off | python3 -c "
+import json, sys
+report = json.load(sys.stdin)
+print(f'    ↳ Repair mode:          {report[\"repair_mode\"]}')
+print(f'    ↳ Repairs applied:      {report[\"repairs_applied\"]}')
 "
 echo ""
 

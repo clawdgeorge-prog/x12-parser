@@ -551,8 +551,9 @@ class X12Parser:
     Supports ISA/IEA, GS/GE, ST/SE envelopes and transaction sets 835 and 837.
     """
 
-    def __init__(self, text: Optional[str] = None):
+    def __init__(self, text: Optional[str] = None, enable_segment_repairs: bool = True):
         self._raw_text = text or ""
+        self.enable_segment_repairs = enable_segment_repairs
         self.segments: List[Segment] = []
         self.interchanges: List[Interchange] = []
         self._seg_parser = X12SegmentParser()
@@ -561,9 +562,9 @@ class X12Parser:
         self.segment_repairs: List[SegmentRepairEvent] = []
 
     @classmethod
-    def from_file(cls, path: str | pathlib.Path) -> "X12Parser":
+    def from_file(cls, path: str | pathlib.Path, enable_segment_repairs: bool = True) -> "X12Parser":
         text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
-        return cls(text=text)
+        return cls(text=text, enable_segment_repairs=enable_segment_repairs)
 
     def _detect_delimiters(self, text: str) -> tuple[str, str, str, str]:
         """Detect delimiters from ISA segment.
@@ -698,6 +699,10 @@ class X12Parser:
         return candidates
 
     def _repair_raw_segments(self, raw_segments: list[str], elem_sep: str) -> list[str]:
+        if not self.enable_segment_repairs:
+            self.segment_repairs = []
+            return raw_segments
+
         repaired_segments: list[str] = []
         self.segment_repairs = []
 
@@ -1717,7 +1722,8 @@ class X12Parser:
                 # match your expectations for novel transaction types.
                 "loop_id_source": "heuristic_first_element",
                 "segment_repair_summary": {
-                    "enabled": True,
+                    "enabled": self.enable_segment_repairs,
+                    "mode": "tolerant" if self.enable_segment_repairs else "strict",
                     "repairable_tags": sorted(_REPAIRABLE_SHIFT_TAGS),
                     "repairs_applied": len(self.segment_repairs),
                     "repairs": [asdict(event) for event in self.segment_repairs],
@@ -1757,12 +1763,12 @@ class X12Parser:
 
 # ── Public helpers ─────────────────────────────────────────────────────────────
 
-def parse(text: str) -> X12Parser:
-    p = X12Parser(text)
+def parse(text: str, enable_segment_repairs: bool = True) -> X12Parser:
+    p = X12Parser(text, enable_segment_repairs=enable_segment_repairs)
     p._parse()
     return p
 
-def parse_file(path: str | pathlib.Path) -> X12Parser:
-    p = X12Parser.from_file(path)
+def parse_file(path: str | pathlib.Path, enable_segment_repairs: bool = True) -> X12Parser:
+    p = X12Parser.from_file(path, enable_segment_repairs=enable_segment_repairs)
     p._parse()
     return p

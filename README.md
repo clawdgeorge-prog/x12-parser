@@ -76,6 +76,15 @@ Common 835 and 837 segments are detected and preserved with raw element extracti
 
 Real external files sometimes contain a stray empty element that shifts the rest of a segment one column to the right. The parser now performs a conservative pre-parse repair pass for high-value segment types (`CLP`, `CAS`, `SVC`): it scores the raw segment shape, tries obvious empty-column removals, and only applies a repair when the repaired candidate is a clearly better structural fit. Repair activity is surfaced in `metadata.segment_repair_summary` so downstream workflows can audit what was changed.
 
+You can now choose between:
+- **tolerant mode** (default) — repairs enabled
+- **strict mode** — pass `--strict-repairs-off` to disable repairs entirely
+
+For batch review, use:
+- `python3 -m src.cli <file> --format repair-report -o out/`
+
+That writes a dedicated JSON + CSV audit bundle instead of making you dig through nested parser output.
+
 ### Explainable validation v2 + stable contracts
 
 Validation JSON now carries a stable contract with:

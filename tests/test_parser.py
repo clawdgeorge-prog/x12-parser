@@ -130,8 +130,24 @@ class TestSegmentRepair:
         parser = parse_file(FIXTURES / "sample_835_shifted_elements.edi")
         payload = parser.to_dict()
         repairs = payload["metadata"]["segment_repair_summary"]
+        assert repairs["enabled"] is True
+        assert repairs["mode"] == "tolerant"
         assert repairs["repairs_applied"] == 3
         assert [item["tag"] for item in repairs["repairs"]] == ["CLP", "CAS", "SVC"]
+
+    def test_strict_mode_disables_segment_repairs(self):
+        parser = parse("CAS*CO**45*10.00~", enable_segment_repairs=False)
+        seg = parser.segments[0]
+        assert seg.tag == "CAS"
+        assert parser._seg_parser.get(seg, 1) == "CO"
+        assert parser._seg_parser.get(seg, 2) == ""
+        assert parser._seg_parser.get(seg, 3) == "45"
+
+        payload = parser.to_dict()
+        repairs = payload["metadata"]["segment_repair_summary"]
+        assert repairs["enabled"] is False
+        assert repairs["mode"] == "strict"
+        assert repairs["repairs_applied"] == 0
 
 
 class TestSegmentParser:

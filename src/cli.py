@@ -10,6 +10,7 @@ Supports output formats:
   analytics — analytics-oriented CSV bundle for BI / reconciliation
   analytics-parquet — optional Parquet analytics bundle (requires `pip install -e .[parquet]`, currently pandas + pyarrow)
   reconcile — 835 reconciliation bundle / JSON report
+  repair-report — dedicated segment-repair JSON + CSV audit bundle
 
 Usage:
     python3 -m src.cli <input.edi> [-o <output.json>]
@@ -19,6 +20,7 @@ Usage:
     python3 -m src.cli <input.edi> --format analytics -o analytics_dir/
     python3 -m src.cli <input.edi> --format analytics-parquet -o analytics_parquet_dir/
     python3 -m src.cli <input.edi> --format reconcile --reference-csv expected_claims.csv -o reconcile_dir/
+    python3 -m src.cli <input.edi> --format repair-report -o repair_report_dir/
     python3 -m src.cli <input.edi> --summary
 
 Examples:
@@ -29,12 +31,14 @@ Examples:
     python3 -m src.cli tests/fixtures/sample_835.edi --format sqlite -o db_export/
     python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o analytics/
     python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o analytics_parquet/
+    python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report -o repair_report/
     python3 -m src.cli tests/fixtures/sample_835.edi --compact
     python3 -m src.cli tests/fixtures/sample_835.edi --summary
     python3 -m src.cli tests/fixtures/sample_837_prof.edi --summary
 """
 from __future__ import annotations
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -44,6 +48,49 @@ from pathlib import Path
 from src.parser import X12Parser
 from src import exporter
 from src.reconcile import read_reference_claims_csv, reconcile_data, write_reconciliation_bundle
+
+
+def _build_repair_report(data: dict, input_path: Path) -> dict:
+    meta = data.get("metadata", {}).get("segment_repair_summary", {})
+    repairs = meta.get("repairs", [])
+    return {
+        "input_file": str(input_path),
+        "repair_mode": meta.get("mode", "tolerant" if meta.get("enabled") else "strict"),
+        "enabled": bool(meta.get("enabled", False)),
+        "repairable_tags": meta.get("repairable_tags", []),
+        "repairs_applied": meta.get("repairs_applied", 0),
+        "repairs": repairs,
+    }
+
+
+def _write_repair_report_bundle(report: dict, out_dir: Path) -> dict[str, int]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = out_dir / "repair_report.json"
+    json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+
+    csv_path = out_dir / "repair_events.csv"
+    fieldnames = [
+        "position",
+        "tag",
+        "action",
+        "confidence",
+        "score_before",
+        "score_after",
+        "note",
+        "original_raw",
+        "repaired_raw",
+    ]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in report.get("repairs", []):
+            writer.writerow({name: item.get(name, "") for name in fieldnames})
+
+    return {
+        json_path.name: 1,
+        csv_path.name: len(report.get("repairs", [])),
+    }
 
 
 def _fmt_money(v) -> str:
@@ -221,9 +268,14 @@ def main() -> None:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "ndjson", "csv", "sqlite", "analytics", "analytics-parquet", "reconcile"],
+        choices=["json", "ndjson", "csv", "sqlite", "analytics", "analytics-parquet", "reconcile", "repair-report"],
         default="json",
-        help="Output format: json (default), ndjson, csv, sqlite, analytics, analytics-parquet, or reconcile",
+        help="Output format: json (default), ndjson, csv, sqlite, analytics, analytics-parquet, reconcile, or repair-report",
+    )
+    parser.add_argument(
+        "--strict-repairs-off",
+        action="store_true",
+        help="Disable tolerant shifted-element repairs and parse in strict mode",
     )
     parser.add_argument(
         "--reference-csv",
@@ -237,7 +289,7 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        p = X12Parser.from_file(args.file)
+        p = X12Parser.from_file(args.file, enable_segment_repairs=not args.strict_repairs_off)
         data = p.to_dict()
     except Exception as exc:
         print(f"ERROR parsing {args.file}: {exc}", file=sys.stderr)
@@ -333,6 +385,17 @@ def main() -> None:
             print(f"Total: {total} records across {len(counts)} files in {args.output}/")
         else:
             print(json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+
+    elif args.format == "repair-report":
+        report = _build_repair_report(data, args.file)
+        if args.output:
+            counts = _write_repair_report_bundle(report, args.output)
+            total = sum(counts.values())
+            for fname, cnt in sorted(counts.items()):
+                print(f"[OK] {fname}: {cnt} records")
+            print(f"Total: {total} records across {len(counts)} files in {args.output}/")
+        else:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

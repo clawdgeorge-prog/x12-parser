@@ -156,6 +156,7 @@ It:
 - tries obvious empty-element removals
 - only keeps a repair if the repaired segment is clearly a better structural fit
 - exposes every repair in `metadata.segment_repair_summary`
+- can be turned off with `--strict-repairs-off` when you want a no-repair comparison
 
 ### Best used for
 - messy payer samples
@@ -166,6 +167,8 @@ It:
 
 ```bash
 python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report -o repair_report/
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --format repair-report --strict-repairs-off
 ```
 
 ### Workflow value
@@ -175,6 +178,8 @@ This helps when the real question is:
 - “Which segments were repaired, and how confident was that repair?”
 
 Treat the repair summary as an audit trail, not magic. If the pattern is not obvious, the parser should leave the row alone.
+
+The dedicated `repair-report` output is the cleanest batch-processing artifact because it writes both machine-readable JSON and a flat CSV of repair events.
 
 ## 6. Analytics-native exports
 
