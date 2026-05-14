@@ -72,6 +72,10 @@ ISA/IEA (interchange) → GS/GE (functional group) → ST/SE (transaction set) a
 
 Common 835 and 837 segments are detected and preserved with raw element extraction. Key segments include BPR, TRN, N1, NM1, CLP, SVC, CAS, HI, CLM, SV1, SV2, and many other common segments in the included fixtures.
 
+### Tolerant shifted-element repair
+
+Real external files sometimes contain a stray empty element that shifts the rest of a segment one column to the right. The parser now performs a conservative pre-parse repair pass for high-value segment types (`CLP`, `CAS`, `SVC`): it scores the raw segment shape, tries obvious empty-column removals, and only applies a repair when the repaired candidate is a clearly better structural fit. Repair activity is surfaced in `metadata.segment_repair_summary` so downstream workflows can audit what was changed.
+
 ### Explainable validation v2 + stable contracts
 
 Validation JSON now carries a stable contract with:

@@ -1,7 +1,7 @@
 """
 X12 Parser — Healthcare EDI 835/837 transactions.
 
-Scope (v0.2.1):
+Scope (v0.2.2):
   - ISA/IEA envelope parsing with **dynamic delimiter extraction**
   - GS/GE functional-group envelope
   - ST/SE transaction set framing
@@ -21,7 +21,7 @@ Known limitations (documented in README):
 
 from __future__ import annotations
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 OUTPUT_SCHEMA_VERSION = "1.0"
 
 import re
@@ -50,6 +50,13 @@ from src.taxonomy import (
 DEFAULT_SEG_TERM = "~"
 DEFAULT_ELEM_SEP = "*"
 DEFAULT_COMP_SEP = ":"
+
+_MONEY_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+_CLP_STATUS_RE = re.compile(r"^(?:[1-9]|1\d|2\d)$")
+_CAS_GROUP_RE = re.compile(r"^[A-Z]{2,3}$")
+_CAS_REASON_RE = re.compile(r"^[A-Z0-9]{1,5}$")
+_SVC_CODE_RE = re.compile(r"^[A-Z0-9:><-]+$")
+_REPAIRABLE_SHIFT_TAGS = {"CLP", "CAS", "SVC"}
 
 
 # ── Dataclasses ───────────────────────────────────────────────────────────────
@@ -97,6 +104,19 @@ class Interchange:
     trailer: Segment      # IEA
     isa06_sender: str = ""
     isa08_receiver: str = ""
+
+
+@dataclass
+class SegmentRepairEvent:
+    position: int
+    tag: str
+    action: str
+    confidence: str
+    score_before: int
+    score_after: int
+    note: str
+    original_raw: str
+    repaired_raw: str
 
 
 # ── Core tokenizer ─────────────────────────────────────────────────────────────
@@ -538,6 +558,7 @@ class X12Parser:
         self._seg_parser = X12SegmentParser()
         self._parsed = False
         self._summary_computed = False
+        self.segment_repairs: List[SegmentRepairEvent] = []
 
     @classmethod
     def from_file(cls, path: str | pathlib.Path) -> "X12Parser":
@@ -597,6 +618,131 @@ class X12Parser:
         
         return elem_sep, comp_sep, rep_sep, seg_term
 
+    @staticmethod
+    def _is_money(value: str) -> bool:
+        return bool(value) and bool(_MONEY_RE.fullmatch(value))
+
+    @staticmethod
+    def _score_clp(elements: list[str]) -> int:
+        if len(elements) < 4:
+            return -4
+        score = 0
+        claim_id = elements[0].strip()
+        status = elements[1].strip()
+        billed = elements[2].strip()
+        paid = elements[3].strip()
+        if claim_id:
+            score += 1
+        if _CLP_STATUS_RE.fullmatch(status):
+            score += 4
+        else:
+            score -= 2
+        score += 3 if X12Parser._is_money(billed) else -2
+        score += 3 if X12Parser._is_money(paid) else -2
+        if len(elements) > 4 and elements[4].strip():
+            score += 1 if X12Parser._is_money(elements[4].strip()) else -1
+        return score
+
+    @staticmethod
+    def _score_cas(elements: list[str]) -> int:
+        if len(elements) < 3:
+            return -4
+        score = 0
+        group = elements[0].strip()
+        reason = elements[1].strip() if len(elements) > 1 else ""
+        amount = elements[2].strip() if len(elements) > 2 else ""
+        qty = elements[3].strip() if len(elements) > 3 else ""
+
+        score += 4 if _CAS_GROUP_RE.fullmatch(group) else -2
+        score += 3 if _CAS_REASON_RE.fullmatch(reason) else -4
+        score += 3 if X12Parser._is_money(amount) else -4
+        if qty:
+            score += 1 if X12Parser._is_money(qty) else -1
+        if any(e == "" for e in elements[:3]):
+            score -= 3
+        return score
+
+    @staticmethod
+    def _score_svc(elements: list[str]) -> int:
+        if len(elements) < 3:
+            return -4
+        score = 0
+        code = elements[0].strip()
+        billed = elements[1].strip()
+        paid = elements[2].strip()
+        score += 2 if _SVC_CODE_RE.fullmatch(code) else -2
+        score += 3 if X12Parser._is_money(billed) else -2
+        score += 3 if X12Parser._is_money(paid) else -2
+        return score
+
+    @classmethod
+    def _score_segment_shape(cls, tag: str, elements: list[str]) -> int:
+        if tag == "CLP":
+            return cls._score_clp(elements)
+        if tag == "CAS":
+            return cls._score_cas(elements)
+        if tag == "SVC":
+            return cls._score_svc(elements)
+        return 0
+
+    @staticmethod
+    def _repair_threshold(tag: str) -> int:
+        return {"CLP": 7, "CAS": 6, "SVC": 6}.get(tag, 999)
+
+    @staticmethod
+    def _generate_shift_candidates(elements: list[str]) -> list[tuple[str, list[str]]]:
+        candidates: list[tuple[str, list[str]]] = []
+        for idx, value in enumerate(elements):
+            if value == "" or value.strip() == "":
+                candidates.append((f"drop_empty_element_{idx + 1}", elements[:idx] + elements[idx + 1 :]))
+        return candidates
+
+    def _repair_raw_segments(self, raw_segments: list[str], elem_sep: str) -> list[str]:
+        repaired_segments: list[str] = []
+        self.segment_repairs = []
+
+        for position, raw in enumerate(raw_segments, start=1):
+            parts = raw.split(elem_sep)
+            tag = parts[0].strip() if parts else ""
+            elements = parts[1:]
+
+            if tag not in _REPAIRABLE_SHIFT_TAGS:
+                repaired_segments.append(raw)
+                continue
+
+            score_before = self._score_segment_shape(tag, elements)
+            best_action = "none"
+            best_elements = elements
+            best_score = score_before
+
+            for action, candidate in self._generate_shift_candidates(elements):
+                score = self._score_segment_shape(tag, candidate)
+                if score > best_score:
+                    best_action = action
+                    best_elements = candidate
+                    best_score = score
+
+            if best_action != "none" and best_score >= self._repair_threshold(tag) and best_score >= score_before + 3:
+                repaired_raw = elem_sep.join([tag, *best_elements])
+                self.segment_repairs.append(
+                    SegmentRepairEvent(
+                        position=position,
+                        tag=tag,
+                        action=best_action,
+                        confidence="high" if best_score >= score_before + 5 else "medium",
+                        score_before=score_before,
+                        score_after=best_score,
+                        note="Removed an empty shifted element because the repaired segment fit the expected X12 field pattern better.",
+                        original_raw=raw,
+                        repaired_raw=repaired_raw,
+                    )
+                )
+                repaired_segments.append(repaired_raw)
+            else:
+                repaired_segments.append(raw)
+
+        return repaired_segments
+
     def _parse(self) -> None:
         if self._parsed:
             return
@@ -608,6 +754,7 @@ class X12Parser:
         elem_sep, comp_sep, rep_sep, seg_term = self._detect_delimiters(text)
         tokenizer = X12Tokenizer(seg_term=seg_term, elem_sep=elem_sep)
         raw_segs = tokenizer.tokenize(text)
+        raw_segs = self._repair_raw_segments(raw_segs, elem_sep)
 
         # Update segment parser with detected element separator
         self._seg_parser = X12SegmentParser(elem_sep=elem_sep)
@@ -1569,6 +1716,12 @@ class X12Parser:
                 # (e.g., "PR", "QC", "CLM"). This is a heuristic; verify loop semantics
                 # match your expectations for novel transaction types.
                 "loop_id_source": "heuristic_first_element",
+                "segment_repair_summary": {
+                    "enabled": True,
+                    "repairable_tags": sorted(_REPAIRABLE_SHIFT_TAGS),
+                    "repairs_applied": len(self.segment_repairs),
+                    "repairs": [asdict(event) for event in self.segment_repairs],
+                },
             },
             "interchanges": [
                 {

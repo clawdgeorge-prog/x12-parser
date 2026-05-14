@@ -92,6 +92,41 @@ class TestDelimiterDetection:
 
 # ── Segment parser tests ───────────────────────────────────────────────────────
 
+class TestSegmentRepair:
+    def test_repairs_shifted_clp_with_empty_column(self):
+        parser = parse("CLP*CLAIM123**1*125.00*100.00~")
+        seg = parser.segments[0]
+        assert seg.tag == "CLP"
+        assert parser._seg_parser.get(seg, 1) == "CLAIM123"
+        assert parser._seg_parser.get(seg, 2) == "1"
+        assert parser._seg_parser.get(seg, 3) == "125.00"
+        assert parser._seg_parser.get(seg, 4) == "100.00"
+
+        payload = parser.to_dict()
+        repairs = payload["metadata"]["segment_repair_summary"]
+        assert repairs["repairs_applied"] == 1
+        assert repairs["repairs"][0]["tag"] == "CLP"
+
+    def test_repairs_shifted_cas_with_empty_column(self):
+        parser = parse("CAS*CO**45*10.00~")
+        seg = parser.segments[0]
+        assert seg.tag == "CAS"
+        assert parser._seg_parser.get(seg, 1) == "CO"
+        assert parser._seg_parser.get(seg, 2) == "45"
+        assert parser._seg_parser.get(seg, 3) == "10.00"
+
+        payload = parser.to_dict()
+        repairs = payload["metadata"]["segment_repair_summary"]
+        assert repairs["repairs_applied"] == 1
+        assert repairs["repairs"][0]["tag"] == "CAS"
+
+    def test_does_not_repair_valid_segment(self):
+        parser = parse("CLP*CLAIM123*1*125.00*100.00~")
+        payload = parser.to_dict()
+        repairs = payload["metadata"]["segment_repair_summary"]
+        assert repairs["repairs_applied"] == 0
+
+
 class TestSegmentParser:
     def test_parse_st(self):
         p = X12SegmentParser(elem_sep="*")
