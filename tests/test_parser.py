@@ -126,6 +126,13 @@ class TestSegmentRepair:
         repairs = payload["metadata"]["segment_repair_summary"]
         assert repairs["repairs_applied"] == 0
 
+    def test_fixture_reports_multiple_repairs(self):
+        parser = parse_file(FIXTURES / "sample_835_shifted_elements.edi")
+        payload = parser.to_dict()
+        repairs = payload["metadata"]["segment_repair_summary"]
+        assert repairs["repairs_applied"] == 3
+        assert [item["tag"] for item in repairs["repairs"]] == ["CLP", "CAS", "SVC"]
+
 
 class TestSegmentParser:
     def test_parse_st(self):

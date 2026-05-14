@@ -41,6 +41,7 @@ Useful when you need to catch:
 - duplicate claim IDs
 - non-numeric amount fields
 - 835 balancing/reconciliation warnings
+- conservative shifted-element repairs surfaced in parser metadata
 
 ## 4) Export for downstream analysis
 
@@ -121,7 +122,21 @@ Writes:
 - `balance_anomalies.csv`
 - `summary.json`
 
-## 6) Recommended new-user workflow
+## 6) Shifted-element repair check
+
+If a partner file looks like fields drifted one column to the right, try:
+
+```bash
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact
+```
+
+Then inspect:
+- `metadata.segment_repair_summary.repairs_applied`
+- `metadata.segment_repair_summary.repairs[]`
+
+Current conservative repair coverage targets obviously shifted `CLP`, `CAS`, and `SVC` segments with stray empty elements.
+
+## 7) Recommended new-user workflow
 
 For a new file, this order works well:
 

@@ -56,8 +56,22 @@ echo ""
 python3 -m src.validate tests/fixtures/sample_missing_ge.edi --preflight || true
 echo ""
 
-# ── 3. Parse an 837 file ───────────────────────────────────────
-echo ">>> 3. PARSE  (837 Healthcare Claim — Professional)"
+# ── 3. Shifted-element tolerant repair demo ───────────────────
+echo ">>> 3. REPAIR DEMO  (shifted empty elements in CLP/CAS/SVC)"
+echo "    Command: python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact"
+echo ""
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+repairs = data['metadata']['segment_repair_summary']
+print(f'    ↳ Repairs applied:      {repairs[\"repairs_applied\"]}')
+for item in repairs['repairs']:
+    print(f'      - {item[\"tag\"]} @ segment {item[\"position\"]}: {item[\"action\"]} ({item[\"confidence\"]})')
+"
+echo ""
+
+# ── 4. Parse an 837 file ───────────────────────────────────────
+echo ">>> 4. PARSE  (837 Healthcare Claim — Professional)"
 echo "    Command: python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact"
 echo ""
 python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact | python3 -c "
@@ -79,15 +93,15 @@ for k, v in loops_by_kind.items():
 "
 echo ""
 
-# ── 4. Forensic analysis ───────────────────────────────────
-echo ">>> 4. FORENSIC  (deep claim tracing + unusual pattern detection)"
+# ── 5. Forensic analysis ───────────────────────────────────
+echo ">>> 5. FORENSIC  (deep claim tracing + unusual pattern detection)"
 echo "    Command: python3 -m src.validate tests/fixtures/sample_835.edi --forensic"
 echo ""
 python3 -m src.validate tests/fixtures/sample_835.edi --forensic
 echo ""
 
-# ── 5. Payer rules + transparent rules trace ─────────────────
-echo ">>> 5. PAYER RULES + RULES TRACE  (companion-guide pack with transparent trace)"
+# ── 6. Payer rules + transparent rules trace ─────────────────
+echo ">>> 6. PAYER RULES + RULES TRACE  (companion-guide pack with transparent trace)"
 echo "    Command: python3 -m src.validate tests/fixtures/sample_837_institutional.edi ..."
 echo "             --rules examples/rules/medicare-837i-companion.sample.json --rules-trace"
 echo ""
@@ -95,27 +109,27 @@ python3 -m src.validate tests/fixtures/sample_837_institutional.edi \
     --rules examples/rules/medicare-837i-companion.sample.json --rules-trace || true
 echo ""
 
-# ── 6. Validate a clean fixture ───────────────────────────────
-echo ">>> 6. VALIDATE  (clean fixture — no structural errors)"
+# ── 7. Validate a clean fixture ───────────────────────────────
+echo ">>> 7. VALIDATE  (clean fixture — no structural errors)"
 echo "    Command: python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi"
 echo ""
 python3 -m src.validate tests/fixtures/sample_whitespace_irregular.edi
 echo ""
 
-# ── 7. Analytics export ───────────────────────────────────────
-echo ">>> 7. ANALYTICS EXPORT  (835 rich fixture → analytics bundle)"
+# ── 8. Analytics export ───────────────────────────────────────
+echo ">>> 8. ANALYTICS EXPORT  (835 rich fixture → analytics bundle)"
 echo "    Command: python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o demo/analytics_out"
 echo ""
 rm -rf demo/analytics_out
 python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics -o demo/analytics_out
 echo ""
 
-# ── 8. Sample payer-pack inventory + optional parquet export ─────────────
-echo ">>> 8. SAMPLE PAYER PACKS  (inventory check)"
+# ── 9. Sample payer-pack inventory + optional parquet export ─────────────
+echo ">>> 9. SAMPLE PAYER PACKS  (inventory check)"
 find examples/rules -maxdepth 1 -name '*.json' -print | sort | sed 's#^#    - #' 
 echo ""
 
-echo ">>> 9. OPTIONAL PARQUET EXPORT  (dependency-gated)"
+echo ">>> 10. OPTIONAL PARQUET EXPORT  (dependency-gated)"
 echo "    Command: python3 -m src.cli tests/fixtures/sample_835_rich.edi --format analytics-parquet -o demo/analytics_parquet_out"
 echo ""
 rm -rf demo/analytics_parquet_out

@@ -141,7 +141,42 @@ That matters when teams need confidence that:
 
 ---
 
-## 5. Analytics-native exports
+## 5. Tolerant shifted-element repair
+
+### What it does
+The parser now performs a conservative pre-parse repair pass for a narrow class of messy real-world rows: segments where a stray empty element shifts later fields to the right.
+
+Current bounded repair coverage targets:
+- `CLP`
+- `CAS`
+- `SVC`
+
+It:
+- scores the raw segment shape
+- tries obvious empty-element removals
+- only keeps a repair if the repaired segment is clearly a better structural fit
+- exposes every repair in `metadata.segment_repair_summary`
+
+### Best used for
+- messy payer samples
+- partner exports with sporadic empty-column drift
+- triage where you need to recover obviously-fixable rows without hiding what changed
+
+### Command
+
+```bash
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact
+```
+
+### Workflow value
+This helps when the real question is:
+- “Did the parser recover this row safely?”
+- “Was there an obvious empty-column shift?”
+- “Which segments were repaired, and how confident was that repair?”
+
+Treat the repair summary as an audit trail, not magic. If the pattern is not obvious, the parser should leave the row alone.
+
+## 6. Analytics-native exports
 
 ### What they do
 Analytics exports turn parsed X12 into review-friendly fact tables.
@@ -184,7 +219,7 @@ Use it when the next question is:
 
 ---
 
-## 6. 835 reconciliation bundle
+## 7. 835 reconciliation bundle
 
 ### What it does
 The reconciliation bundle compares parsed 835 claims against an optional reference claim list.
@@ -225,7 +260,7 @@ This is intentionally bounded and review-oriented — not full ERA posting autom
 
 ---
 
-## 7. Stable output contracts
+## 8. Stable output contracts
 
 ### What they do
 Stable output contracts make parser and validator results safer to embed in other tools.

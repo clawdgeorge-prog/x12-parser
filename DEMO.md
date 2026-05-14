@@ -11,6 +11,7 @@
 7. **Summarize** an 835 or 837 file → human-readable summary (money amounts, claim counts, discrepancies)
 8. **Export** → CSV, NDJSON, SQLite-ready normalized bundle, or analytics bundle
 9. **Reconcile** → compare 835 claims against a reference CSV
+10. **Repair demo** → show conservative auto-repair of obviously shifted CLP/CAS/SVC segments
 
 > Note: 837 Dental is included only as a bounded scaffold/demo case. Variant detection works, but dental-specific semantics are not yet deep enough to treat it as full production-grade support.
 
@@ -64,6 +65,9 @@ python3 -m src.validate tests/fixtures/sample_missing_ge.edi --explain
 
 # Preflight submission risk → rejection-risk summary JSON
 python3 -m src.validate tests/fixtures/sample_missing_ge.edi --preflight
+
+# Parse shifted-element demo fixture → JSON (compact, inspect repair metadata)
+python3 -m src.cli tests/fixtures/sample_835_shifted_elements.edi --compact
 
 # Parse 837 → JSON (compact)
 python3 -m src.cli tests/fixtures/sample_837_prof.edi --compact
@@ -162,6 +166,20 @@ Result: CLEAN
 }
 ```
 
+### Repair demo — sample shifted-element summary
+
+```
+↳ Repairs applied:      3
+  - CLP @ segment 4: drop_empty_element_2 (medium)
+  - CAS @ segment 5: drop_empty_element_2 (high)
+  - SVC @ segment 6: drop_empty_element_2 (medium)
+```
+
+The shifted demo fixture lives at:
+- `tests/fixtures/sample_835_shifted_elements.edi`
+
+Use it when you want a quick proof that the parser is surfacing, not hiding, repair decisions.
+
 ### Parse 837 — key fields extracted
 
 ```
@@ -219,7 +237,7 @@ The parser emits nested JSON:
 
 ```json
 {
-  "version": "0.2.1",
+  "version": "0.2.2",
   "schema_version": "1.0",
   "interchanges": [
     {
